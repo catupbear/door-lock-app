@@ -1,10 +1,9 @@
 """
 16路门锁控制系统
-硬件: 杭州三郎 16门锁板
-协议: RS485 / Modbus-RTU
+协议: 自定义 WKLY 帧协议（逆向自午虎洗车App）
+帧格式: 57 4B 4C 59 [len] [board] [cmd] [data...] [XOR]
 """
 from __future__ import annotations
-import struct
 import threading
 import time
 
@@ -51,57 +50,26 @@ from kivy.core.window import Window
 from kivy.metrics import dp
 
 
-# ─── Modbus 帧构造 ─────────────────────────────────────────────────────────────
+# ─── WKLY 帧协议 ──────────────────────────────────────────────────────────────
+# 逆向自午虎洗车App（MainActivity.buildFrame）
+# 帧: 57 4B 4C 59 [len] [board_addr] [cmd] [data...] [XOR校验]
 
-def crc16_modbus(data: bytes) -> bytes:
-    crc = 0xFFFF
-    for byte in data:
-        crc ^= byte
-        for _ in range(8):
-            if crc & 0x0001:
-                crc = (crc >> 1) ^ 0xA001
-            else:
-                crc >>= 1
-    return struct.pack('<H', crc)  # 低字节在前
+CMD_OPEN = 0x82  # 开单个锁
+
+def build_wkly_frame(board_addr: int, cmd: int, data: bytes) -> bytes:
+    frame_len = len(data) + 7 + 1
+    frame = bytearray([0x57, 0x4B, 0x4C, 0x59, frame_len, board_addr, cmd])
+    frame.extend(data)
+    frame.append(0x00)
+    xor = 0
+    for b in frame[:-1]:
+        xor ^= b
+    frame[-1] = xor & 0xFF
+    return bytes(frame)
 
 
 def build_open_cmd(board_addr: int, lock_num: int) -> bytes:
-    """FC05 开锁：FF 00"""
-    raw = bytes([board_addr, 0x05, 0x00, lock_num, 0xFF, 0x00])
-    return raw + crc16_modbus(raw)
-
-
-def build_close_cmd(board_addr: int, lock_num: int) -> bytes:
-    """FC05 关锁：00 00"""
-    raw = bytes([board_addr, 0x05, 0x00, lock_num, 0x00, 0x00])
-    return raw + crc16_modbus(raw)
-
-
-def build_read_control_cmd(board_addr: int) -> bytes:
-    """FC01 读16路控制输出状态"""
-    raw = bytes([board_addr, 0x01, 0x00, 0x01, 0x00, 0x0C])
-    return raw + crc16_modbus(raw)
-
-
-def build_read_feedback_cmd(board_addr: int) -> bytes:
-    """FC02 读16路反馈信号（物理锁状态）"""
-    raw = bytes([board_addr, 0x02, 0x00, 0x01, 0x00, 0x0C])
-    return raw + crc16_modbus(raw)
-
-
-def parse_16_bits(resp: bytes, fc: int):
-    """
-    解析 FC01/FC02 返回的 16 路位状态。
-    返回长度为16的列表，states[0]=锁1，states[15]=锁16。
-    第一字节 bit0=锁1…bit7=锁8；第二字节 bit0=锁9…bit7=锁16。
-    """
-    if not resp or len(resp) < 7:
-        return None
-    if resp[1] != fc or resp[2] != 2:
-        return None
-    d1, d2 = resp[3], resp[4]
-    return [bool(d1 & (1 << i)) for i in range(8)] + \
-           [bool(d2 & (1 << i)) for i in range(8)]
+    return build_wkly_frame(board_addr, CMD_OPEN, bytes([lock_num]))
 
 
 # ─── 串口控制器 ────────────────────────────────────────────────────────────────
@@ -151,19 +119,7 @@ class LockController:
 
     def open_lock(self, addr: int, lock_num: int) -> bool:
         resp = self._send(build_open_cmd(addr, lock_num))
-        return bool(resp and len(resp) >= 6)
-
-    def close_lock(self, addr: int, lock_num: int) -> bool:
-        resp = self._send(build_close_cmd(addr, lock_num))
-        return bool(resp and len(resp) >= 6)
-
-    def read_feedback(self, addr: int):
-        resp = self._send(build_read_feedback_cmd(addr))
-        return parse_16_bits(resp, 0x02)
-
-    def read_control(self, addr: int):
-        resp = self._send(build_read_control_cmd(addr))
-        return parse_16_bits(resp, 0x01)
+        return resp is not None
 
 
 # ─── 单个门锁卡片 ──────────────────────────────────────────────────────────────
@@ -254,7 +210,7 @@ class MainLayout(BoxLayout):
 
         bar.add_widget(Label(text='板号:', size_hint_x=0.07, font_size=dp(14)))
         self.inp_addr = TextInput(
-            text='1', multiline=False, input_filter='int',
+            text='0', multiline=False, input_filter='int',
             font_size=dp(14), size_hint_x=0.07
         )
         bar.add_widget(self.inp_addr)
@@ -362,9 +318,9 @@ class MainLayout(BoxLayout):
     @property
     def _addr(self) -> int:
         try:
-            return max(1, int(self.inp_addr.text or '1'))
+            return max(0, int(self.inp_addr.text or '0'))
         except ValueError:
-            return 1
+            return 0
 
     def _update_cards(self, states):
         for i, card in enumerate(self.cards):
@@ -393,7 +349,6 @@ class MainLayout(BoxLayout):
                 self.lbl_conn.text = '已连接'
                 self.lbl_conn.color = (0.2, 0.85, 0.35, 1)
                 self._log(f'已连接 {port} @ {baud}')
-                self._refresh()
             else:
                 self._log(f'连接失败: {msg}')
 
@@ -404,10 +359,7 @@ class MainLayout(BoxLayout):
 
         def _task():
             ok = self.ctrl.open_lock(self._addr, num)
-            self._log(f'锁{num:02d} 开锁{"成功" if ok else "失败"}')
-            if ok:
-                time.sleep(0.15)
-                self._do_refresh()
+            self._log(f'锁{num:02d} 开锁指令已发送 | {self.ctrl.last_error}')
 
         threading.Thread(target=_task, daemon=True).start()
 
@@ -420,26 +372,13 @@ class MainLayout(BoxLayout):
             addr = self._addr
             for i in range(1, 17):
                 self.ctrl.open_lock(addr, i)
-                time.sleep(0.04)
+                time.sleep(0.1)
             self._log('全部开锁指令已发送')
-            time.sleep(0.3)
-            self._do_refresh()
 
         threading.Thread(target=_task, daemon=True).start()
 
     def _refresh(self):
-        if not self.ctrl.connected:
-            self._log('未连接，无法刷新')
-            return
-        threading.Thread(target=self._do_refresh, daemon=True).start()
-
-    def _do_refresh(self):
-        states = self.ctrl.read_feedback(self._addr)
-        if states:
-            Clock.schedule_once(lambda _: self._update_cards(states))
-            self._log('状态已刷新')
-        else:
-            self._log(f'读取失败 | {self.ctrl.last_error}')
+        self._log('该协议不支持读取锁状态')
 
     def _scan_ports(self):
         import glob
