@@ -19,9 +19,6 @@ android.archs = arm64-v8a, armeabi-v7a
 # 串口访问权限
 android.permissions = READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
 
-# 允许访问 /dev/ttyS* 串口（部分设备需要）
-android.add_aars =
-android.gradle_dependencies =
 
 [buildozer]
 log_level = 2

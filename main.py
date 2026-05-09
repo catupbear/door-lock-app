@@ -3,6 +3,7 @@
 硬件: 杭州三郎 16门锁板
 协议: RS485 / Modbus-RTU
 """
+from __future__ import annotations
 import struct
 import threading
 import time
