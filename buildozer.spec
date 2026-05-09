@@ -23,6 +23,8 @@ android.permissions = READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
 android.add_aars =
 android.gradle_dependencies =
 
+p4a.source_dir = /Users/a111/p4a_src/python-for-android-2024.1.21
+
 [buildozer]
 log_level = 2
 warn_on_root = 1
