@@ -7,15 +7,30 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
+    runs-on: ubuntu-22.04
 
-      - name: Build APK with Buildozer
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          command: buildozer android debug
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git unzip ccache \
+            openjdk-17-jdk autoconf automake libtool pkg-config \
+            libffi-dev libssl-dev zlib1g-dev \
+            libltdl-dev
+
+      - name: Install buildozer
+        run: pip install buildozer cython
+
+      - name: Build APK
+        run: buildozer android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
