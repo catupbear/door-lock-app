@@ -140,9 +140,9 @@ class LockController:
             try:
                 self._ser.reset_input_buffer()
                 self._ser.write(cmd)
-                time.sleep(0.2)
-                waiting = self._ser.in_waiting or 32
-                resp = self._ser.read(waiting)
+                self._ser.flush()
+                time.sleep(0.3)
+                resp = self._ser.read(32)  # 不用in_waiting，直接读（Android兼容）
                 self.last_error = f'发:{cmd.hex()} 收:{resp.hex() if resp else "空"}'
                 return resp or None
             except Exception as e:
