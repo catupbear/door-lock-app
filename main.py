@@ -110,6 +110,7 @@ class LockController:
     def __init__(self):
         self._ser = None
         self._lock = threading.Lock()
+        self.last_error = ''
 
     def connect(self, port: str, baudrate: int = 9600):
         try:
@@ -139,10 +140,13 @@ class LockController:
             try:
                 self._ser.reset_input_buffer()
                 self._ser.write(cmd)
-                time.sleep(0.1)
+                time.sleep(0.2)
                 waiting = self._ser.in_waiting or 32
-                return self._ser.read(waiting) or None
-            except Exception:
+                resp = self._ser.read(waiting)
+                self.last_error = f'发:{cmd.hex()} 收:{resp.hex() if resp else "空"}'
+                return resp or None
+            except Exception as e:
+                self.last_error = str(e)
                 return None
 
     def open_lock(self, addr: int, lock_num: int) -> bool:
@@ -435,7 +439,7 @@ class MainLayout(BoxLayout):
             Clock.schedule_once(lambda _: self._update_cards(states))
             self._log('状态已刷新')
         else:
-            self._log('读取状态失败（检查连接与板号）')
+            self._log(f'读取失败 | {self.ctrl.last_error}')
 
     def _scan_ports(self):
         import glob
