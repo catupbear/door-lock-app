@@ -295,8 +295,16 @@ class MainLayout(BoxLayout):
         )
         btn_refresh.bind(on_press=lambda _: self._refresh())
 
+        btn_scan = Button(
+            text='扫描串口', font_size=dp(15),
+            background_color=(0.55, 0.35, 0.65, 1),
+            background_normal=''
+        )
+        btn_scan.bind(on_press=lambda _: self._scan_ports())
+
         bar.add_widget(btn_all_open)
         bar.add_widget(btn_refresh)
+        bar.add_widget(btn_scan)
         self.add_widget(bar)
 
     # ── 16 路锁网格 ───────────────────────────────────────────────────────────
@@ -331,6 +339,16 @@ class MainLayout(BoxLayout):
         )
         self.lbl_log.bind(size=self.lbl_log.setter('text_size'))
         self.add_widget(self.lbl_log)
+
+        self.scan_result = Label(
+            text='',
+            size_hint_y=None, height=dp(0),
+            font_size=dp(12),
+            halign='left', valign='top',
+            color=(0.95, 0.85, 0.40, 1)
+        )
+        self.scan_result.bind(size=self.scan_result.setter('text_size'))
+        self.add_widget(self.scan_result)
 
     # ── 工具方法 ──────────────────────────────────────────────────────────────
 
@@ -418,6 +436,28 @@ class MainLayout(BoxLayout):
             self._log('状态已刷新')
         else:
             self._log('读取状态失败（检查连接与板号）')
+
+    def _scan_ports(self):
+        import glob
+        self._log('正在扫描串口...')
+        def _task():
+            found = []
+            patterns = ['/dev/ttyS*', '/dev/ttyHS*', '/dev/ttyUSB*',
+                        '/dev/ttyACM*', '/dev/ttyMSM*', '/dev/ttyRS485*']
+            for p in patterns:
+                found.extend(sorted(glob.glob(p)))
+            if found:
+                text = '发现串口:\n' + '\n'.join(found)
+                height = dp(20 + 20 * len(found))
+            else:
+                text = '未发现任何串口'
+                height = dp(40)
+            def _update(_):
+                self.scan_result.text = text
+                self.scan_result.height = height
+            Clock.schedule_once(_update)
+            self._log(f'扫描完成，发现 {len(found)} 个串口')
+        threading.Thread(target=_task, daemon=True).start()
 
 
 # ─── App 入口 ──────────────────────────────────────────────────────────────────
