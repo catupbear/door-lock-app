@@ -5,6 +5,16 @@
 响应格式: [0x8A或0x80] [board] [lock] [0x11=已锁/0x00=开锁] [XOR]
 状态查询: 8A [board] 00 11 [XOR]，板卡逐锁回包（最多12个）
 """
+# 优先加载外部脚本（U盘/SD卡），免重新打包
+import os as _os, runpy as _runpy
+for _override in [
+    '/sdcard/door_lock_main.py',
+    '/storage/self/primary/door_lock_main.py',
+]:
+    if _os.path.exists(_override):
+        _runpy.run_path(_override, run_name='__main__')
+        raise SystemExit
+
 from __future__ import annotations
 import threading
 import time
