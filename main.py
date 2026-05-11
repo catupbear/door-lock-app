@@ -5,15 +5,20 @@
 响应格式: [0x8A或0x80] [board] [lock] [0x11=已锁/0x00=开锁] [XOR]
 状态查询: 8A [board] 00 11 [XOR]，板卡逐锁回包（最多12个）
 """
-# 优先加载外部脚本（U盘/SD卡），免重新打包
-import os as _os, runpy as _runpy
-for _override in [
+# 支持从U盘/SD卡热更新脚本，自动持久化到内部存储
+import os as _os, runpy as _runpy, shutil as _shutil
+_INTERNAL = _os.path.join(_os.path.expanduser('~'), 'door_lock_main.py')
+_USB_PATHS = [
     '/sdcard/door_lock_main.py',
     '/storage/self/primary/door_lock_main.py',
-]:
-    if _os.path.exists(_override):
-        _runpy.run_path(_override, run_name='__main__')
-        raise SystemExit
+]
+for _src in _USB_PATHS:
+    if _os.path.exists(_src):
+        _shutil.copy2(_src, _INTERNAL)  # 复制到内部，覆盖旧版
+        break
+if _os.path.exists(_INTERNAL):
+    _runpy.run_path(_INTERNAL, run_name='__main__')
+    raise SystemExit
 
 from __future__ import annotations
 import threading
