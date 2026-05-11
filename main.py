@@ -242,7 +242,7 @@ class MainLayout(BoxLayout):
 
         bar.add_widget(Label(text='板号:', size_hint_x=0.07, font_size=dp(14)))
         self.inp_addr = TextInput(
-            text='0', multiline=False, input_filter='int',
+            text='1', multiline=False, input_filter='int',
             font_size=dp(14), size_hint_x=0.07
         )
         bar.add_widget(self.inp_addr)
