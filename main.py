@@ -20,7 +20,6 @@ if _os.path.exists(_INTERNAL):
     _runpy.run_path(_INTERNAL, run_name='__main__')
     raise SystemExit
 
-from __future__ import annotations
 import threading
 import time
 
