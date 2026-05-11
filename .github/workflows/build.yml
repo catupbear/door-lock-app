@@ -43,7 +43,7 @@ jobs:
       - name: Pin pip and cython versions
         run: printf 'pip<25\ncython<3\n' > /tmp/pip-constraints.txt
 
-      - name: Ensure Android NDK 27 is available
+      - name: Ensure Android SDK components are available
         run: |
           SDKMANAGER=/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
           yes | $SDKMANAGER --licenses || true
@@ -51,11 +51,16 @@ jobs:
           if [ ! -d "/usr/local/lib/android/sdk/ndk/27.2.12479018" ]; then
             echo "NDK 27.2.12479018 not found, installing..."
             $SDKMANAGER "ndk;27.2.12479018"
-          else
-            echo "NDK 27.2.12479018 already present"
           fi
-          # Verify NDK path exists before proceeding
+          # Install build-tools if not already present
+          if [ ! -d "/usr/local/lib/android/sdk/build-tools" ] || \
+             [ -z "$(ls /usr/local/lib/android/sdk/build-tools 2>/dev/null)" ]; then
+            echo "build-tools not found, installing..."
+            $SDKMANAGER "build-tools;34.0.0"
+          fi
+          # Verify paths
           ls /usr/local/lib/android/sdk/ndk/27.2.12479018/ndk-build
+          ls /usr/local/lib/android/sdk/build-tools/
 
       - name: Build APK
         env:
