@@ -47,6 +47,9 @@ jobs:
         run: |
           SDKMANAGER=/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
           yes | $SDKMANAGER --licenses || true
+          # p4a 查找 sdkmanager 的老路径，建软链接
+          mkdir -p /usr/local/lib/android/sdk/tools/bin
+          ln -sf $SDKMANAGER /usr/local/lib/android/sdk/tools/bin/sdkmanager
           # Install NDK if not already present
           if [ ! -d "/usr/local/lib/android/sdk/ndk/27.2.12479018" ]; then
             echo "NDK 27.2.12479018 not found, installing..."
@@ -61,6 +64,7 @@ jobs:
           # Verify paths
           ls /usr/local/lib/android/sdk/ndk/27.2.12479018/ndk-build
           ls /usr/local/lib/android/sdk/build-tools/
+          ls /usr/local/lib/android/sdk/tools/bin/sdkmanager
 
       - name: Build APK
         env:
