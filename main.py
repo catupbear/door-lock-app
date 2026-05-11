@@ -1,7 +1,9 @@
 """
 16路门锁控制系统
-协议: 自定义 WKLY 帧协议（逆向自午虎洗车App）
-帧格式: 57 4B 4C 59 [len] [board] [cmd] [data...] [XOR]
+协议: 老铁 5字节帧协议（逆向自智能柜_1.6.2.349.apk）
+帧格式: 8A [board] [lock] 11 [XOR(前4字节)]
+响应格式: [0x8A或0x80] [board] [lock] [0x11=已锁/0x00=开锁] [XOR]
+状态查询: 8A [board] 00 11 [XOR]，板卡逐锁回包（最多12个）
 """
 from __future__ import annotations
 import threading
@@ -50,26 +52,25 @@ from kivy.core.window import Window
 from kivy.metrics import dp
 
 
-# ─── WKLY 帧协议 ──────────────────────────────────────────────────────────────
-# 逆向自午虎洗车App（MainActivity.buildFrame）
-# 帧: 57 4B 4C 59 [len] [board_addr] [cmd] [data...] [XOR校验]
+# ─── 老铁帧协议 ───────────────────────────────────────────────────────────────
+# 逆向自智能柜_1.6.2.349.apk（d4/e.java: e.f4200a.b(board, lock)）
+# 帧: 8A [board] [lock] 11 [XOR(前4字节)]
 
-CMD_OPEN = 0x82  # 开单个锁
-
-def build_wkly_frame(board_addr: int, cmd: int, data: bytes) -> bytes:
-    frame_len = len(data) + 7 + 1
-    frame = bytearray([0x57, 0x4B, 0x4C, 0x59, frame_len, board_addr, cmd])
-    frame.extend(data)
-    frame.append(0x00)
+def _laotie_frame(board: int, lock: int) -> bytes:
+    frame = bytearray([0x8A, board & 0xFF, lock & 0xFF, 0x11])
     xor = 0
-    for b in frame[:-1]:
+    for b in frame:
         xor ^= b
-    frame[-1] = xor & 0xFF
+    frame.append(xor & 0xFF)
     return bytes(frame)
 
 
 def build_open_cmd(board_addr: int, lock_num: int) -> bytes:
-    return build_wkly_frame(board_addr, CMD_OPEN, bytes([lock_num]))
+    return _laotie_frame(board_addr, lock_num)
+
+
+def build_status_cmd(board_addr: int) -> bytes:
+    return _laotie_frame(board_addr, 0x00)
 
 
 # ─── 串口控制器 ────────────────────────────────────────────────────────────────
@@ -101,7 +102,7 @@ class LockController:
     def connected(self):
         return self._ser is not None and self._ser.is_open
 
-    def _send(self, cmd: bytes) -> bytes | None:
+    def _send(self, cmd: bytes, read_len: int = 5) -> bytes | None:
         if not self.connected:
             return None
         with self._lock:
@@ -110,7 +111,7 @@ class LockController:
                 self._ser.write(cmd)
                 self._ser.flush()
                 time.sleep(0.3)
-                resp = self._ser.read(32)  # 不用in_waiting，直接读（Android兼容）
+                resp = self._ser.read(read_len)
                 self.last_error = f'发:{cmd.hex()} 收:{resp.hex() if resp else "空"}'
                 return resp or None
             except Exception as e:
@@ -119,7 +120,38 @@ class LockController:
 
     def open_lock(self, addr: int, lock_num: int) -> bool:
         resp = self._send(build_open_cmd(addr, lock_num))
-        return resp is not None
+        if not resp or len(resp) < 5:
+            return False
+        # result[3] == 0x11 或 0x00 均表示执行成功
+        return resp[3] in (0x11, 0x00)
+
+    def query_status(self, addr: int) -> dict[int, bool] | None:
+        """读取板卡各锁状态，返回 {lock_num: is_locked} 或 None"""
+        cmd = build_status_cmd(addr)
+        if not self.connected:
+            return None
+        with self._lock:
+            try:
+                self._ser.reset_input_buffer()
+                self._ser.write(cmd)
+                self._ser.flush()
+                time.sleep(0.5)
+                # 板卡逐锁回包，每包5字节，最多16锁
+                raw = self._ser.read(5 * 16)
+                self.last_error = f'状态查询 发:{cmd.hex()} 收:{raw.hex() if raw else "空"}'
+                if not raw or len(raw) < 5:
+                    return None
+                states: dict[int, bool] = {}
+                for i in range(0, len(raw) - 4, 5):
+                    pkt = raw[i:i+5]
+                    if pkt[0] in (0x8A, 0x80) and pkt[1] == addr:
+                        lock_no = pkt[2]
+                        locked = pkt[3] == 0x11
+                        states[lock_no] = locked
+                return states if states else None
+            except Exception as e:
+                self.last_error = str(e)
+                return None
 
 
 # ─── 单个门锁卡片 ──────────────────────────────────────────────────────────────
@@ -378,7 +410,24 @@ class MainLayout(BoxLayout):
         threading.Thread(target=_task, daemon=True).start()
 
     def _refresh(self):
-        self._log('该协议不支持读取锁状态')
+        if not self.ctrl.connected:
+            self._log('未连接')
+            return
+
+        def _task():
+            self._log('正在查询锁状态...')
+            states = self.ctrl.query_status(self._addr)
+            if states is None:
+                self._log(f'状态查询无响应 | {self.ctrl.last_error}')
+                return
+            def _update(_):
+                for card in self.cards:
+                    locked = states.get(card.num)
+                    card.set_status(locked)
+            Clock.schedule_once(_update)
+            self._log(f'状态已更新，获取到 {len(states)} 个锁 | {self.ctrl.last_error}')
+
+        threading.Thread(target=_task, daemon=True).start()
 
     def _scan_ports(self):
         import glob
