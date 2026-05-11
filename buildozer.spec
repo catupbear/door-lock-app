@@ -14,7 +14,7 @@ fullscreen = 0
 android.api = 31
 android.minapi = 21
 android.ndk = 25
-android.archs = arm64-v8a
+android.archs = armeabi-v7a
 
 # 串口访问权限
 android.permissions = READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
