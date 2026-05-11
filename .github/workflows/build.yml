@@ -59,6 +59,7 @@ jobs:
           # 确保需要的组件存在
           [ ! -d "$SDK/ndk/25.2.9519653" ] && $SDKMANAGER "ndk;25.2.9519653" || true
           [ ! -d "$SDK/platforms/android-29" ] && $SDKMANAGER "platforms;android-29" || true
+          [ ! -d "$SDK/platforms/android-31" ] && $SDKMANAGER "platforms;android-31" || true
           [ -z "$(ls $SDK/build-tools 2>/dev/null)" ] && $SDKMANAGER "build-tools;34.0.0" || true
           # 验证关键路径
           ls $SDK/ndk/25.2.9519653/ndk-build
@@ -72,7 +73,7 @@ jobs:
           JAVA_HOME: '/usr/lib/jvm/temurin-17-jdk-amd64'
           ANDROIDSDK: '/usr/local/lib/android/sdk'
           ANDROIDNDK: '/usr/local/lib/android/sdk/ndk/25.2.9519653'
-          ANDROIDAPI: '29'
+          ANDROIDAPI: '31'
           ANDROIDMINAPI: '21'
         run: |
           set -o pipefail

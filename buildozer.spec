@@ -11,7 +11,7 @@ requirements = python3==3.11.11,hostpython3==3.11.11,kivy==2.3.0,pyserial
 orientation = landscape
 fullscreen = 0
 
-android.api = 29
+android.api = 31
 android.minapi = 21
 android.ndk = 25
 android.archs = arm64-v8a
