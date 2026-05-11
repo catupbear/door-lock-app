@@ -28,8 +28,6 @@ jobs:
             cmake libffi-dev libssl-dev \
             libbz2-dev libsqlite3-dev libreadline-dev liblzma-dev \
             build-essential ccache patchelf automake \
-            libgstreamer1.0-dev gstreamer1.0-plugins-base \
-            libgl1-mesa-dev libgles2-mesa-dev \
             libltdl-dev
 
       - name: Install buildozer and cython
