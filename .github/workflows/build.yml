@@ -48,23 +48,26 @@ jobs:
           SDKMANAGER=/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
           yes | $SDKMANAGER --licenses || true
           # p4a 查找 sdkmanager 的老路径，建软链接
-          mkdir -p /usr/local/lib/android/sdk/tools/bin
-          ln -sf $SDKMANAGER /usr/local/lib/android/sdk/tools/bin/sdkmanager
-          # Install NDK if not already present
+          sudo mkdir -p /usr/local/lib/android/sdk/tools/bin
+          sudo ln -sf $SDKMANAGER /usr/local/lib/android/sdk/tools/bin/sdkmanager
+          # 确保 NDK 存在
           if [ ! -d "/usr/local/lib/android/sdk/ndk/27.2.12479018" ]; then
-            echo "NDK 27.2.12479018 not found, installing..."
             $SDKMANAGER "ndk;27.2.12479018"
           fi
-          # Install build-tools if not already present
+          # 确保 build-tools 存在
           if [ ! -d "/usr/local/lib/android/sdk/build-tools" ] || \
              [ -z "$(ls /usr/local/lib/android/sdk/build-tools 2>/dev/null)" ]; then
-            echo "build-tools not found, installing..."
             $SDKMANAGER "build-tools;34.0.0"
+          fi
+          # 确保 android-29 platform 存在（p4a 编译需要）
+          if [ ! -d "/usr/local/lib/android/sdk/platforms/android-29" ]; then
+            $SDKMANAGER "platforms;android-29"
           fi
           # Verify paths
           ls /usr/local/lib/android/sdk/ndk/27.2.12479018/ndk-build
           ls /usr/local/lib/android/sdk/build-tools/
           ls /usr/local/lib/android/sdk/tools/bin/sdkmanager
+          ls /usr/local/lib/android/sdk/platforms/android-29/
 
       - name: Build APK
         env:
