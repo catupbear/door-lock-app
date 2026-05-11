@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4
@@ -26,10 +27,13 @@ jobs:
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev \
             libbz2-dev libsqlite3-dev libreadline-dev liblzma-dev \
-            build-essential ccache patchelf
+            build-essential ccache patchelf automake \
+            libgstreamer1.0-dev gstreamer1.0-plugins-base \
+            libgl1-mesa-dev libgles2-mesa-dev \
+            libltdl-dev
 
-      - name: Install buildozer
-        run: pip install buildozer cython
+      - name: Install buildozer and cython
+        run: pip install buildozer "cython<3"
 
       - name: Cache buildozer directory
         uses: actions/cache@v4
@@ -38,12 +42,22 @@ jobs:
           key: buildozer-${{ hashFiles('buildozer.spec') }}
           restore-keys: buildozer-
 
-      - name: Pin pip to avoid resolvelib bug
-        run: echo "pip<25" > /tmp/pip-constraints.txt
+      - name: Pin pip and cython versions
+        run: printf 'pip<25\ncython<3\n' > /tmp/pip-constraints.txt
 
-      - name: Accept Android SDK licenses
+      - name: Ensure Android NDK 27 is available
         run: |
-          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
+          SDKMANAGER=/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
+          yes | $SDKMANAGER --licenses || true
+          # Install NDK if not already present
+          if [ ! -d "/usr/local/lib/android/sdk/ndk/27.2.12479018" ]; then
+            echo "NDK 27.2.12479018 not found, installing..."
+            $SDKMANAGER "ndk;27.2.12479018"
+          else
+            echo "NDK 27.2.12479018 already present"
+          fi
+          # Verify NDK path exists before proceeding
+          ls /usr/local/lib/android/sdk/ndk/27.2.12479018/ndk-build
 
       - name: Build APK
         env:
@@ -51,13 +65,27 @@ jobs:
           PIP_CONSTRAINT: '/tmp/pip-constraints.txt'
           JAVA_HOME: '/usr/lib/jvm/temurin-17-jdk-amd64'
           ANDROIDSDK: '/usr/local/lib/android/sdk'
-          ANDROIDNDK: '/usr/local/lib/android/sdk/ndk/27.3.13750724'
+          ANDROIDNDK: '/usr/local/lib/android/sdk/ndk/27.2.12479018'
           ANDROIDAPI: '29'
           ANDROIDMINAPI: '21'
-        run: yes | buildozer android debug
+        run: |
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee build.log
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: doorlock-apk
           path: bin/*.apk
+
+      - name: Show last 150 lines of build log on failure
+        if: failure()
+        run: tail -150 build.log || true
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log

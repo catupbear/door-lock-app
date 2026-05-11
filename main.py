@@ -3,13 +3,14 @@
 协议: 老铁 5字节帧协议（逆向自智能柜_1.6.2.349.apk）
 帧格式: 8A [board] [lock] 11 [XOR(前4字节)]
 响应格式: [0x8A或0x80] [board] [lock] [0x11=已锁/0x00=开锁] [XOR]
-状态查询: 8A [board] 00 11 [XOR]，板卡逐锁回包（最多12个）
+状态查询: 8A [board] 00 11 [XOR]，板卡逐锁回包（最多16个）
 """
 # 支持从U盘/SD卡热更新脚本，自动持久化到内部存储
 import os as _os, runpy as _runpy, shutil as _shutil
 _INTERNAL = _os.path.join(_os.path.expanduser('~'), 'door_lock_main.py')
 _USB_PATHS = [
     '/sdcard/door_lock_main.py',
+    '/storage/emulated/0/door_lock_main.py',
     '/storage/self/primary/door_lock_main.py',
 ]
 for _src in _USB_PATHS:
@@ -368,10 +369,6 @@ class MainLayout(BoxLayout):
         except ValueError:
             return 0
 
-    def _update_cards(self, states):
-        for i, card in enumerate(self.cards):
-            card.set_status(states[i] if i < len(states) else None)
-
     # ── 事件处理 ──────────────────────────────────────────────────────────────
 
     def _toggle_conn(self, *_):
@@ -405,7 +402,8 @@ class MainLayout(BoxLayout):
 
         def _task():
             ok = self.ctrl.open_lock(self._addr, num)
-            self._log(f'锁{num:02d} 开锁指令已发送 | {self.ctrl.last_error}')
+            status = '成功' if ok else '失败'
+            self._log(f'锁{num:02d} 开锁{status} | {self.ctrl.last_error}')
 
         threading.Thread(target=_task, daemon=True).start()
 
