@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py,ttf,ttc,otf
 source.include_patterns = chinese_font.ttf
 version = 1.0
-requirements = python3==3.11.11,kivy==2.3.0,pyserial
+requirements = python3,kivy==2.3.0,pyserial
 
 orientation = landscape
 fullscreen = 0
