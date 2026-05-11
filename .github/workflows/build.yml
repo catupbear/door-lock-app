@@ -11,10 +11,10 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Python 3.11.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11.11'
 
@@ -34,7 +34,7 @@ jobs:
         run: pip install buildozer "cython<3"
 
       - name: Cache buildozer directory
-        uses: actions/cache@v4
+        uses: actions/cache@v4.2.3
         with:
           path: ~/.buildozer
           key: buildozer-${{ hashFiles('buildozer.spec') }}
@@ -43,31 +43,27 @@ jobs:
       - name: Pin pip and cython versions
         run: printf 'pip<25\ncython<3\n' > /tmp/pip-constraints.txt
 
-      - name: Ensure Android SDK components are available
+      - name: Setup Android SDK for buildozer
         run: |
-          SDKMANAGER=/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager
+          SDK=/usr/local/lib/android/sdk
+          SDKMANAGER=$SDK/cmdline-tools/latest/bin/sdkmanager
+          # 接受所有许可证
           yes | $SDKMANAGER --licenses || true
-          # p4a 查找 sdkmanager 的老路径，建软链接
-          sudo mkdir -p /usr/local/lib/android/sdk/tools/bin
-          sudo ln -sf $SDKMANAGER /usr/local/lib/android/sdk/tools/bin/sdkmanager
-          # 确保 NDK 存在
-          if [ ! -d "/usr/local/lib/android/sdk/ndk/27.2.12479018" ]; then
-            $SDKMANAGER "ndk;27.2.12479018"
-          fi
-          # 确保 build-tools 存在
-          if [ ! -d "/usr/local/lib/android/sdk/build-tools" ] || \
-             [ -z "$(ls /usr/local/lib/android/sdk/build-tools 2>/dev/null)" ]; then
-            $SDKMANAGER "build-tools;34.0.0"
-          fi
-          # 确保 android-29 platform 存在（p4a 编译需要）
-          if [ ! -d "/usr/local/lib/android/sdk/platforms/android-29" ]; then
-            $SDKMANAGER "platforms;android-29"
-          fi
-          # Verify paths
-          ls /usr/local/lib/android/sdk/ndk/27.2.12479018/ndk-build
-          ls /usr/local/lib/android/sdk/build-tools/
-          ls /usr/local/lib/android/sdk/tools/bin/sdkmanager
-          ls /usr/local/lib/android/sdk/platforms/android-29/
+          # buildozer 默认在 ~/.buildozer/android/platform/android-sdk 找 SDK
+          # 用软链接指向预装 SDK，省去重新下载
+          mkdir -p ~/.buildozer/android/platform
+          ln -sf $SDK ~/.buildozer/android/platform/android-sdk
+          # p4a 用老路径找 sdkmanager，建软链接
+          sudo mkdir -p $SDK/tools/bin
+          sudo ln -sf $SDKMANAGER $SDK/tools/bin/sdkmanager
+          # 确保需要的组件存在
+          [ ! -d "$SDK/ndk/27.2.12479018" ] && $SDKMANAGER "ndk;27.2.12479018" || true
+          [ ! -d "$SDK/platforms/android-29" ] && $SDKMANAGER "platforms;android-29" || true
+          [ -z "$(ls $SDK/build-tools 2>/dev/null)" ] && $SDKMANAGER "build-tools;34.0.0" || true
+          # 验证关键路径
+          ls $SDK/ndk/27.2.12479018/ndk-build
+          ls $SDK/platforms/android-29/
+          ls $SDK/build-tools/
 
       - name: Build APK
         env:
@@ -84,7 +80,7 @@ jobs:
 
       - name: Upload APK
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: doorlock-apk
           path: bin/*.apk
@@ -95,7 +91,7 @@ jobs:
 
       - name: Upload build log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: build-log
           path: build.log

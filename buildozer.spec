@@ -14,10 +14,7 @@ fullscreen = 0
 android.api = 29
 android.minapi = 21
 android.ndk = 27
-android.archs = arm64-v8a, armeabi-v7a
-
-android.sdk_path = /usr/local/lib/android/sdk
-android.ndk_path = /usr/local/lib/android/sdk/ndk/27.2.12479018
+android.archs = arm64-v8a
 
 # 串口访问权限
 android.permissions = READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
