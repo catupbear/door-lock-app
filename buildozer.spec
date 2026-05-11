@@ -13,7 +13,7 @@ fullscreen = 0
 
 android.api = 29
 android.minapi = 21
-android.ndk = 25b
+android.ndk = 27
 android.archs = arm64-v8a, armeabi-v7a
 
 # 串口访问权限

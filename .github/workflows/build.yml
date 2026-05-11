@@ -21,12 +21,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git zip unzip openjdk-17-jdk \
+            git zip unzip \
             autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev \
             libbz2-dev libsqlite3-dev libreadline-dev liblzma-dev \
-            build-essential ccache
+            build-essential ccache patchelf
 
       - name: Install buildozer
         run: pip install buildozer cython
@@ -41,10 +41,19 @@ jobs:
       - name: Pin pip to avoid resolvelib bug
         run: echo "pip<25" > /tmp/pip-constraints.txt
 
+      - name: Accept Android SDK licenses
+        run: |
+          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses 2>/dev/null || true
+
       - name: Build APK
         env:
           BUILDOZER_WARN_ON_ROOT: '0'
           PIP_CONSTRAINT: '/tmp/pip-constraints.txt'
+          JAVA_HOME: '/usr/lib/jvm/temurin-17-jdk-amd64'
+          ANDROIDSDK: '/usr/local/lib/android/sdk'
+          ANDROIDNDK: '/usr/local/lib/android/sdk/ndk/27.3.13750724'
+          ANDROIDAPI: '29'
+          ANDROIDMINAPI: '21'
         run: yes | buildozer android debug
 
       - name: Upload APK
