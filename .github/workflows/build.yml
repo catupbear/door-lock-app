@@ -37,9 +37,13 @@ jobs:
           key: buildozer-${{ hashFiles('buildozer.spec') }}
           restore-keys: buildozer-
 
+      - name: Pin pip to avoid resolvelib bug
+        run: echo "pip<25" > /tmp/pip-constraints.txt
+
       - name: Build APK
         env:
           BUILDOZER_WARN_ON_ROOT: '0'
+          PIP_CONSTRAINT: '/tmp/pip-constraints.txt'
         run: yes | buildozer android debug
 
       - name: Upload APK
