@@ -537,7 +537,8 @@ class RemoteConfigManager:
 
     def check_script_update(self):
         """检查并下载新版Python脚本，重启后生效"""
-        resp = api.check_update(LocalLogger.APP_VERSION)
+        current = globals().get('_HOTUPDATE_VERSION') or LocalLogger.APP_VERSION
+        resp = api.check_update(current)
         if not resp or resp.get('code') != 0:
             return
         d = resp.get('data', {})
@@ -548,6 +549,9 @@ class RemoteConfigManager:
         version = d.get('version', '')
         if not url or not REQUESTS_AVAILABLE:
             return
+        # 相对路径补全为完整 URL
+        if url.startswith('/'):
+            url = cfg('api_base', 'http://keyapi.wuhuxiche.com').rstrip('/') + url
         try:
             r = _req.get(url, timeout=30)
             if r.status_code != 200:
