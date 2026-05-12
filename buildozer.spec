@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py,ttf,ttc,otf
 source.include_patterns = chinese_font.ttf
 version = 1.0
-requirements = python3==3.11.11,hostpython3==3.11.11,kivy==2.3.0,pyserial
+requirements = python3==3.11.11,hostpython3==3.11.11,kivy==2.3.0,pyserial,requests
 
 orientation = landscape
 fullscreen = 0
@@ -17,7 +17,7 @@ android.ndk = 25
 android.archs = armeabi-v7a
 
 # 串口访问权限
-android.permissions = READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE
+android.permissions = READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, INTERNET
 
 
 [buildozer]

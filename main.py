@@ -30,6 +30,15 @@ try:
 except ImportError:
     SERIAL_AVAILABLE = False
 
+try:
+    import requests as _req
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    _req = None
+    REQUESTS_AVAILABLE = False
+
+_POLL_INTERVAL = 2.0
+
 import os
 
 # 必须在其他 kivy 模块之前设置环境
@@ -169,6 +178,95 @@ class LockController:
                 return None
 
 
+# ─── API 远程轮询 ─────────────────────────────────────────────────────────────
+#
+# 接口规范（服务端需实现）：
+#
+# 1. 取指令
+#    GET {api_base}/api/cabinet/cmd?did={device_id}
+#    响应（无指令）: {"code": 0, "data": null}
+#    响应（有指令）: {"code": 0, "data": {"id": "唯一ID", "lock": 5, "type": 1}}
+#      type: 1=取钥匙  2=还钥匙（当前阶段两者均执行开锁）
+#
+# 2. 执行回调
+#    POST {api_base}/api/cabinet/ack
+#    Body: {"id": "唯一ID", "ok": true, "msg": ""}
+#
+
+class ApiPoller:
+    def __init__(self):
+        self.api_base  = 'http://192.168.1.100'
+        self.device_id = 'cabinet_001'
+        self._running    = False
+        self._last_id    = None
+        self._ctrl       = None
+        self._get_addr   = None
+        self._log        = None
+        self._set_status = None
+
+    def configure(self, ctrl, get_addr, log_fn, set_status):
+        self._ctrl       = ctrl
+        self._get_addr   = get_addr
+        self._log        = log_fn
+        self._set_status = set_status
+
+    def start(self):
+        if self._running or not REQUESTS_AVAILABLE:
+            return
+        self._running = True
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def stop(self):
+        self._running = False
+
+    def _loop(self):
+        while self._running:
+            self._poll()
+            time.sleep(_POLL_INTERVAL)
+
+    def _poll(self):
+        try:
+            r = _req.get(
+                f'{self.api_base}/api/cabinet/cmd',
+                params={'did': self.device_id},
+                timeout=3
+            )
+            if r.status_code == 200:
+                Clock.schedule_once(lambda _: self._set_status(True))
+                data = r.json().get('data')
+                if data and data.get('id') != self._last_id:
+                    threading.Thread(target=self._execute, args=(data,), daemon=True).start()
+        except Exception:
+            Clock.schedule_once(lambda _: self._set_status(False))
+
+    def _execute(self, data):
+        cmd_id      = data.get('id', '')
+        lock        = int(data.get('lock', 0))
+        action_type = int(data.get('type', 1))
+        label       = '取钥匙' if action_type == 1 else '还钥匙'
+        self._last_id = cmd_id
+
+        if not (self._ctrl and self._ctrl.connected):
+            self._log(f'[远程] {label} 锁{lock:02d} — 串口未连接')
+            self._ack(cmd_id, False, '串口未连接')
+            return
+
+        addr = self._get_addr() if self._get_addr else 1
+        ok   = self._ctrl.open_lock(addr, lock)
+        self._log(f'[远程] {label} 锁{lock:02d} {"成功" if ok else "失败"} | {self._ctrl.last_error}')
+        self._ack(cmd_id, ok, '' if ok else self._ctrl.last_error)
+
+    def _ack(self, cmd_id, ok, msg=''):
+        try:
+            _req.post(
+                f'{self.api_base}/api/cabinet/ack',
+                json={'id': cmd_id, 'ok': ok, 'msg': msg},
+                timeout=3
+            )
+        except Exception:
+            pass
+
+
 # ─── 单个门锁卡片 ──────────────────────────────────────────────────────────────
 
 class LockCard(BoxLayout):
@@ -226,9 +324,18 @@ class MainLayout(BoxLayout):
         self.ctrl = LockController()
         self.cards: list[LockCard] = []
         self._build_top_bar()
+        self._build_api_bar()
         self._build_action_bar()
         self._build_grid()
         self._build_log()
+        self._poller = ApiPoller()
+        self._poller.configure(
+            ctrl=self.ctrl,
+            get_addr=lambda: self._addr,
+            log_fn=self._log,
+            set_status=self._on_api_status,
+        )
+        self._poller.start()
 
     # ── 顶部连接栏 ────────────────────────────────────────────────────────────
 
@@ -279,6 +386,58 @@ class MainLayout(BoxLayout):
         bar.add_widget(self.lbl_conn)
 
         self.add_widget(bar)
+
+    # ── API 配置栏 ────────────────────────────────────────────────────────────
+
+    def _build_api_bar(self):
+        bar = BoxLayout(
+            size_hint_y=None, height=dp(46),
+            spacing=dp(8), padding=(dp(4), dp(2))
+        )
+
+        bar.add_widget(Label(text='API:', size_hint_x=0.07, font_size=dp(13)))
+        self.inp_api = TextInput(
+            text='http://192.168.1.100', hint_text='服务器地址',
+            multiline=False, font_size=dp(13), size_hint_x=0.40
+        )
+        bar.add_widget(self.inp_api)
+
+        bar.add_widget(Label(text='ID:', size_hint_x=0.05, font_size=dp(13)))
+        self.inp_did = TextInput(
+            text='cabinet_001', hint_text='设备ID',
+            multiline=False, font_size=dp(13), size_hint_x=0.22
+        )
+        bar.add_widget(self.inp_did)
+
+        btn_apply = Button(
+            text='应用', font_size=dp(13),
+            size_hint_x=0.10,
+            background_color=(0.25, 0.45, 0.25, 1),
+            background_normal=''
+        )
+        btn_apply.bind(on_press=self._apply_api_config)
+        bar.add_widget(btn_apply)
+
+        self.lbl_api = Label(
+            text='●离线', font_size=dp(13),
+            size_hint_x=0.16,
+            color=(0.9, 0.3, 0.3, 1)
+        )
+        bar.add_widget(self.lbl_api)
+        self.add_widget(bar)
+
+    def _apply_api_config(self, *_):
+        self._poller.api_base  = self.inp_api.text.strip().rstrip('/')
+        self._poller.device_id = self.inp_did.text.strip()
+        self._log(f'API已更新: {self._poller.api_base}  ID={self._poller.device_id}')
+
+    def _on_api_status(self, online: bool):
+        if online:
+            self.lbl_api.text  = '●在线'
+            self.lbl_api.color = (0.2, 0.85, 0.35, 1)
+        else:
+            self.lbl_api.text  = '●离线'
+            self.lbl_api.color = (0.9, 0.3, 0.3, 1)
 
     # ── 全部操作栏 ────────────────────────────────────────────────────────────
 
@@ -470,7 +629,11 @@ class DoorLockApp(App):
     def build(self):
         self.title = '16路门锁控制'
         Window.clearcolor = (0.12, 0.12, 0.15, 1)
-        return MainLayout()
+        self._layout = MainLayout()
+        return self._layout
+
+    def on_stop(self):
+        self._layout._poller.stop()
 
 
 if __name__ == '__main__':
