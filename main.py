@@ -3,41 +3,72 @@
 协议: 老铁 5字节帧协议
 """
 # ─── 热更新加载器（必须最先执行） ──────────────────────────────────────────────
-import os as _os, runpy as _runpy, shutil as _shutil
-_INTERNAL = _os.path.join(_os.path.expanduser('~'), 'door_lock_main.py')
+import os as _os, runpy as _runpy, shutil as _shutil, time as _time
 
-# 防递归：当本文件通过 runpy.run_path(_INTERNAL) 被加载时，
-# __file__ 会被设置为 _INTERNAL，此时跳过加载器避免无限递归。
-# 此方案无需依赖旧 APK 设置任何环境变量，兼容所有版本。
+_INTERNAL = _os.path.join(_os.path.expanduser('~'), 'door_lock_main.py')
+_LOG_PATH  = _os.path.join(_os.path.expanduser('~'), 'door_lock_loader.log')
+
+def _loader_log(msg):
+    try:
+        with open(_LOG_PATH, 'a', encoding='utf-8') as _f:
+            _f.write(f"[{_time.strftime('%H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
 if globals().get('__file__', '') != _INTERNAL:
     _FNAME = 'door_lock_main.py'
     _SEARCH_ROOTS = [
         '/sdcard', '/storage/emulated/0', '/storage/self/primary',
         '/storage', '/mnt/usb', '/mnt/usb_storage', '/mnt/media_rw',
-        '/mnt/sdcard', '/mnt/extSdCard',
+        '/mnt/sdcard', '/mnt/extSdCard', '/mnt/udisk', '/udisk',
     ]
     _found = False
+    _loader_log('=== 加载器启动 ===')
     for _root in _SEARCH_ROOTS:
         _direct = _os.path.join(_root, _FNAME)
         if _os.path.exists(_direct):
-            _shutil.copy2(_direct, _INTERNAL)
-            _found = True
+            _loader_log(f'发现: {_direct}')
+            try:
+                _shutil.copy2(_direct, _INTERNAL)
+                _found = True
+                _loader_log('复制成功')
+            except Exception as _ce:
+                _loader_log(f'复制失败: {_ce}')
             break
-        # 扫描一层子目录（覆盖 /storage/xxxx-xxxx/ UUID 挂载点）
         try:
             for _sub in _os.listdir(_root):
                 _p = _os.path.join(_root, _sub, _FNAME)
                 if _os.path.exists(_p):
-                    _shutil.copy2(_p, _INTERNAL)
-                    _found = True
+                    _loader_log(f'发现: {_p}')
+                    try:
+                        _shutil.copy2(_p, _INTERNAL)
+                        _found = True
+                        _loader_log('复制成功')
+                    except Exception as _ce:
+                        _loader_log(f'复制失败: {_ce}')
                     break
         except Exception:
             pass
         if _found:
             break
+    if not _found:
+        _loader_log('未发现外部更新文件')
     if _os.path.exists(_INTERNAL):
-        _runpy.run_path(_INTERNAL, run_name='__main__')
-        raise SystemExit
+        _loader_log('运行热更新...')
+        try:
+            _runpy.run_path(_INTERNAL, run_name='__main__')
+            raise SystemExit(0)
+        except SystemExit:
+            raise
+        except Exception as _e:
+            _loader_log(f'热更新失败: {_e!r}，已删除，回退到内置代码')
+            try:
+                _os.remove(_INTERNAL)
+            except Exception:
+                pass
+    _loader_log('运行内置代码')
+
+_HOTUPDATE_VERSION = None  # 热更新文件会将此值覆盖为版本字符串
 
 # ─── 标准库 ───────────────────────────────────────────────────────────────────
 import hashlib
@@ -1580,6 +1611,12 @@ class AdminScreen(Screen):
         )
         btn_rst.bind(on_press=lambda _: App.get_running_app().restart_app())
         bot.add_widget(btn_rst)
+        btn_hu_log = Button(
+            text='热更新日志', font_size=dp(13), size_hint_x=0.28,
+            background_color=(0.18, 0.35, 0.52, 1), background_normal='',
+        )
+        btn_hu_log.bind(on_press=self._show_hu_log)
+        bot.add_widget(btn_hu_log)
         root.add_widget(bot)
         self.add_widget(root)
 
@@ -1593,7 +1630,8 @@ class AdminScreen(Screen):
         self.inp_addr.text = str(cfg('board_addr', 1))
         self.inp_api.text  = cfg('api_base', 'http://keyapi.wuhuxiche.com')
         self.inp_did.text  = cfg('device_id', '')
-        self.lbl_log.text  = f'v{LocalLogger.APP_VERSION}'
+        _hu = globals().get('_HOTUPDATE_VERSION')
+        self.lbl_log.text = f'v{LocalLogger.APP_VERSION}  热更新: {_hu or "内置代码"}'
         if ctrl.connected:
             self.btn_conn.text = '断开'
             self.btn_conn.background_color = (0.70, 0.35, 0.08, 1)
@@ -1622,6 +1660,31 @@ class AdminScreen(Screen):
         _set_immersive(self._immersive)
         self.btn_immersive.text = '退出全屏' if self._immersive else '全屏'
         self.lbl_log.text = ('已进入全屏' if self._immersive else '已退出全屏')
+
+    def _show_hu_log(self, *_):
+        try:
+            with open(_LOG_PATH, 'r', encoding='utf-8') as _f:
+                _lines = _f.readlines()
+            content = ''.join(_lines[-20:]).strip() or '（日志为空）'
+        except FileNotFoundError:
+            content = '（暂无热更新日志，首次运行或日志已清除）'
+        except Exception as _e:
+            content = f'读取失败: {_e}'
+        from kivy.uix.popup import Popup
+        from kivy.uix.scrollview import ScrollView as _SV
+        lbl = Label(
+            text=content, font_size=dp(11), halign='left', valign='top',
+            size_hint_y=None, markup=False,
+        )
+        lbl.bind(texture_size=lambda w, s: setattr(w, 'height', s[1]))
+        lbl.bind(width=lambda w, _: setattr(w, 'text_size', (w.width, None)))
+        sv = _SV()
+        sv.add_widget(lbl)
+        pop = Popup(
+            title='热更新加载日志', content=sv,
+            size_hint=(0.9, 0.7),
+        )
+        pop.open()
 
     def _manual_update(self, *_):
         self.lbl_log.text = '正在检查更新...'
