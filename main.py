@@ -226,7 +226,7 @@ class LockController:
 class ApiClient:
     @property
     def _base(self):
-        return cfg('api_base', 'http://192.168.1.100').rstrip('/')
+        return cfg('api_base', 'http://keyapi.wuhuxiche.com').rstrip('/')
 
     def _get(self, path, **params):
         if not REQUESTS_AVAILABLE:
@@ -666,7 +666,7 @@ def _check_network() -> bool:
     if not REQUESTS_AVAILABLE:
         return False
     try:
-        _req.get(cfg('api_base', 'http://192.168.1.100'), timeout=2)
+        _req.get(cfg('api_base', 'http://keyapi.wuhuxiche.com'), timeout=2)
         return True
     except Exception:
         return False
@@ -839,7 +839,7 @@ class InitWaitScreen(Screen):
         api_row.add_widget(Label(text='服务器地址:', font_size=dp(13),
                                   size_hint_x=None, width=dp(100)))
         self.inp_api_init = TextInput(
-            text=cfg('api_base', 'http://192.168.1.100'),
+            text=cfg('api_base', 'http://keyapi.wuhuxiche.com'),
             multiline=False, font_size=dp(13),
         )
         api_row.add_widget(self.inp_api_init)
@@ -911,7 +911,7 @@ class InitWaitScreen(Screen):
             else:
                 self.lbl_net.text  = '网络：❌ 未检测到网络接口'
                 self.lbl_net.color = (0.9, 0.35, 0.35, 1)
-            base = cfg('api_base', 'http://192.168.1.100')
+            base = cfg('api_base', 'http://keyapi.wuhuxiche.com')
             if can_reach:
                 self.lbl_srv.text  = f'服务器：✅ {base} 可访问'
                 self.lbl_srv.color = (0.2, 0.9, 0.4, 1)
@@ -1479,7 +1479,7 @@ class AdminScreen(Screen):
         a = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
         a.add_widget(Label(text='API:', size_hint_x=0.06, font_size=dp(13)))
         self.inp_api = TextInput(
-            text=cfg('api_base', 'http://192.168.1.100'),
+            text=cfg('api_base', 'http://keyapi.wuhuxiche.com'),
             multiline=False, font_size=dp(13), size_hint_x=0.42,
         )
         a.add_widget(self.inp_api)
@@ -1586,7 +1586,7 @@ class AdminScreen(Screen):
         self.inp_port.text = cfg('port', '/dev/ttyS1')
         self.spn_baud.text = str(cfg('baudrate', 9600))
         self.inp_addr.text = str(cfg('board_addr', 1))
-        self.inp_api.text  = cfg('api_base', 'http://192.168.1.100')
+        self.inp_api.text  = cfg('api_base', 'http://keyapi.wuhuxiche.com')
         self.inp_did.text  = cfg('device_id', '')
         self.lbl_log.text  = f'v{LocalLogger.APP_VERSION}'
         if ctrl.connected:
