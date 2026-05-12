@@ -635,7 +635,14 @@ class PosterManager:
             now = time.strftime('%H:%M')
             active = [i['path'] for i in self._items
                       if i.get('start', '00:00') <= now <= i.get('end', '23:59')]
-            return active if active else [i['path'] for i in self._items]
+            result = active if active else [i['path'] for i in self._items]
+            if not result:
+                # 无网络/无缓存时使用内置离线图片
+                fallback = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                        'assets', 'offline_poster.png')
+                if os.path.exists(fallback):
+                    return [fallback]
+            return result
 
     def refresh(self):
         threading.Thread(target=self._fetch, daemon=True).start()
