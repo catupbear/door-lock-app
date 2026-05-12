@@ -1,10 +1,11 @@
 [app]
-title = 16路门锁控制
+title = 车物家锁控
 package.name = doorlock
 package.domain = org.doorlock
 source.dir = .
 source.include_exts = py,ttf,ttc,otf
 source.include_patterns = chinese_font.ttf
+icon.filename = icon.png
 version = 1.0
 requirements = python3==3.11.11,hostpython3==3.11.11,kivy==2.3.0,pyserial,requests
 
