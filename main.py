@@ -19,13 +19,17 @@ if _os.path.exists(_INTERNAL):
     raise SystemExit
 
 # ─── 标准库 ───────────────────────────────────────────────────────────────────
+import base64
 import hashlib
 import hmac
 import json
 import os
+import shutil
 import sys
 import threading
 import time
+
+_BACKUP_SCRIPT = _INTERNAL + '.bak'
 
 # ─── 可选依赖 ─────────────────────────────────────────────────────────────────
 try:
@@ -75,6 +79,26 @@ for _font in [
         except Exception:
             pass
 
+# ─── 配置加密（XOR+Base64，防止明文篡改） ─────────────────────────────────────
+_CFG_KEY = b'DoorLockKiosk@2024!'
+
+
+def _xor(data: bytes) -> bytes:
+    k = _CFG_KEY
+    return bytes(data[i] ^ k[i % len(k)] for i in range(len(data)))
+
+
+def _cfg_encode(d: dict) -> bytes:
+    return base64.b64encode(_xor(json.dumps(d, ensure_ascii=False).encode()))
+
+
+def _cfg_decode(raw: bytes) -> dict:
+    stripped = raw.lstrip()
+    if stripped.startswith(b'{'):
+        return json.loads(raw)          # 旧格式明文 JSON，向后兼容
+    return json.loads(_xor(base64.b64decode(raw)))
+
+
 # ─── 配置管理 ─────────────────────────────────────────────────────────────────
 _CFG: dict = {}
 _CFG_FILE: str = ''
@@ -86,8 +110,8 @@ def _cfg_load(data_dir: str):
     _CFG_FILE = os.path.join(data_dir, 'config.json')
     if os.path.exists(_CFG_FILE):
         try:
-            with open(_CFG_FILE, encoding='utf-8') as f:
-                _CFG = json.load(f)
+            with open(_CFG_FILE, 'rb') as f:
+                _CFG = _cfg_decode(f.read())
         except Exception:
             _CFG = {}
 
@@ -96,8 +120,10 @@ def _cfg_save():
     if _CFG_FILE:
         with _CFG_LOCK:
             try:
-                with open(_CFG_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(_CFG, f, ensure_ascii=False, indent=2)
+                tmp = _CFG_FILE + '.tmp'
+                with open(tmp, 'wb') as f:
+                    f.write(_cfg_encode(_CFG))
+                os.replace(tmp, _CFG_FILE)
             except Exception:
                 pass
 
@@ -492,6 +518,11 @@ class RemoteConfigManager:
             if md5 and hashlib.md5(content).hexdigest() != md5:
                 logger.error(f'远程包MD5校验失败 v{version}')
                 return
+            if os.path.exists(_INTERNAL):
+                try:
+                    shutil.copy2(_INTERNAL, _BACKUP_SCRIPT)
+                except Exception:
+                    pass
             with open(_INTERNAL, 'wb') as f:
                 f.write(content)
             logger.info(f'远程包已下载 v{version}，重启后生效')
@@ -630,6 +661,127 @@ def _dark_bg(widget, r=0.08, g=0.08, b=0.10):
     )
 
 
+# ─── 设备信息与 Android 系统工具 ─────────────────────────────────────────────
+
+def _get_device_mac() -> str:
+    for iface in ['eth0', 'wlan0', 'eth1']:
+        try:
+            with open(f'/sys/class/net/{iface}/address') as f:
+                mac = f.read().strip()
+            if mac and mac not in ('', '00:00:00:00:00:00'):
+                return mac
+        except Exception:
+            pass
+    return ''
+
+
+def _get_android_id() -> str:
+    try:
+        from jnius import autoclass
+        Settings = autoclass('android.provider.Settings$Secure')
+        activity = autoclass('org.kivy.android.PythonActivity').mActivity
+        return Settings.getString(activity.getContentResolver(), 'android_id') or ''
+    except Exception:
+        return ''
+
+
+def _get_ip() -> str:
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return ''
+
+
+def _get_firmware() -> str:
+    try:
+        from jnius import autoclass
+        Build = autoclass('android.os.Build')
+        return f'{Build.MANUFACTURER} {Build.MODEL} / Android {Build.VERSION.RELEASE}'
+    except Exception:
+        import platform
+        return platform.platform()[:60]
+
+
+def _set_immersive(enable: bool):
+    """切换沉浸式全屏（隐藏状态栏+导航栏）。Android 11 以下用 FLAG 方式，12+ 仍兼容。"""
+    try:
+        from jnius import autoclass
+        View = autoclass('android.view.View')
+        activity = autoclass('org.kivy.android.PythonActivity').mActivity
+        dv = activity.getWindow().getDecorView()
+        if enable:
+            flags = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
+                     View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                     View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                     View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                     View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                     View.SYSTEM_UI_FLAG_FULLSCREEN)
+        else:
+            flags = View.SYSTEM_UI_FLAG_VISIBLE
+        dv.setSystemUiVisibility(flags)
+    except Exception:
+        pass
+
+
+def _system_reboot():
+    """重启整个 Android 设备（需 REBOOT 系统权限或 root）。"""
+    try:
+        from jnius import autoclass
+        activity = autoclass('org.kivy.android.PythonActivity').mActivity
+        pm = activity.getSystemService('power')
+        pm.reboot(None)
+    except Exception:
+        try:
+            os.system('reboot')
+        except Exception:
+            pass
+
+
+def _open_wifi_settings():
+    try:
+        from jnius import autoclass
+        Intent = autoclass('android.content.Intent')
+        Settings = autoclass('android.provider.Settings')
+        activity = autoclass('org.kivy.android.PythonActivity').mActivity
+        activity.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+    except Exception:
+        pass
+
+
+def _open_ethernet_settings():
+    try:
+        from jnius import autoclass
+        Intent = autoclass('android.content.Intent')
+        Settings = autoclass('android.provider.Settings')
+        activity = autoclass('org.kivy.android.PythonActivity').mActivity
+        try:
+            activity.startActivity(Intent('android.settings.ETHERNET_SETTINGS'))
+        except Exception:
+            activity.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
+    except Exception:
+        pass
+
+
+def rollback_script() -> tuple:
+    """将远程包回滚到上一个备份版本。"""
+    if not os.path.exists(_BACKUP_SCRIPT):
+        return False, '无备份文件'
+    try:
+        shutil.copy2(_BACKUP_SCRIPT, _INTERNAL)
+        try:
+            logger.info('脚本已回滚，重启后生效')
+        except Exception:
+            pass
+        return True, '回滚成功，重启后生效'
+    except Exception as e:
+        return False, f'回滚失败: {e}'
+
+
 # ─── 初始化等待页 ─────────────────────────────────────────────────────────────
 class InitWaitScreen(Screen):
     def __init__(self, **kw):
@@ -682,7 +834,9 @@ class InitWaitScreen(Screen):
         threading.Thread(target=self._do_init, daemon=True).start()
 
     def _do_init(self):
-        resp = api.init_device()
+        mac = _get_device_mac()
+        android_id = _get_android_id()
+        resp = api.init_device(mac, android_id)
         if resp and resp.get('code') == 0:
             d = resp['data']
             cfg_set('device_id', d['device_id'])
@@ -754,6 +908,7 @@ class PosterScreen(Screen):
         self.add_widget(root)
 
     def on_enter(self):
+        _set_immersive(True)
         self.lbl_did.text = cfg('device_id', '--')
         self._reload()
         self._auto_ev = Clock.schedule_interval(self._advance, cfg('poster_interval', 5))
@@ -1040,6 +1195,11 @@ class ResultScreen(Screen):
             self.lbl_main.text  = '柜门故障'
             self.lbl_main.color = (0.9, 0.6, 0.2, 1)
             self.lbl_sub.text   = '请联系管理员'
+        elif msg == '无可用柜门':
+            self.lbl_icon.text  = '🔒'
+            self.lbl_main.text  = '暂无可用柜门'
+            self.lbl_main.color = (0.9, 0.60, 0.20, 1)
+            self.lbl_sub.text   = '请稍后再试或联系管理员'
         else:
             self.lbl_icon.text  = '❌'
             self.lbl_main.text  = '开柜失败'
@@ -1140,10 +1300,12 @@ class AdminAuthScreen(Screen):
 class AdminScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
-        root = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(6))
+        self._immersive = False
+        root = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(5))
         _dark_bg(root, 0.10, 0.10, 0.13)
 
-        top = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        # ── 顶部工具栏 ────────────────────────────────────────────────────────
+        top = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
         btn_back = Button(
             text='← 返回', font_size=dp(14), size_hint_x=0.12,
             background_color=(0.28, 0.28, 0.33, 1), background_normal='',
@@ -1169,8 +1331,26 @@ class AdminScreen(Screen):
         top.add_widget(btn_log)
         root.add_widget(top)
 
-        # 串口配置
-        s = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        # ── 设备信息（异步填充） ─────────────────────────────────────────────
+        self.lbl_dev1 = Label(
+            text='MAC: --  IP: --  设备ID: --',
+            font_size=dp(12), halign='left', valign='middle',
+            size_hint_y=None, height=dp(22),
+            color=(0.65, 0.85, 0.65, 1),
+        )
+        self.lbl_dev1.bind(size=self.lbl_dev1.setter('text_size'))
+        root.add_widget(self.lbl_dev1)
+        self.lbl_dev2 = Label(
+            text='Android ID: --  固件: --',
+            font_size=dp(12), halign='left', valign='middle',
+            size_hint_y=None, height=dp(20),
+            color=(0.55, 0.75, 0.55, 1),
+        )
+        self.lbl_dev2.bind(size=self.lbl_dev2.setter('text_size'))
+        root.add_widget(self.lbl_dev2)
+
+        # ── 串口配置 ──────────────────────────────────────────────────────────
+        s = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
         s.add_widget(Label(text='端口:', size_hint_x=0.09, font_size=dp(13)))
         self.inp_port = TextInput(
             text=cfg('port', '/dev/ttyS1'), multiline=False,
@@ -1203,8 +1383,8 @@ class AdminScreen(Screen):
         s.add_widget(self.lbl_conn)
         root.add_widget(s)
 
-        # API配置
-        a = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(6))
+        # ── API配置 ───────────────────────────────────────────────────────────
+        a = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(6))
         a.add_widget(Label(text='API:', size_hint_x=0.06, font_size=dp(13)))
         self.inp_api = TextInput(
             text=cfg('api_base', 'http://192.168.1.100'),
@@ -1225,16 +1405,62 @@ class AdminScreen(Screen):
         a.add_widget(btn_save)
         root.add_widget(a)
 
-        # 16路锁测试
+        # ── 系统控制行 ────────────────────────────────────────────────────────
+        sys_row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(5))
+        self.btn_immersive = Button(
+            text='全屏', font_size=dp(12),
+            background_color=(0.25, 0.40, 0.55, 1), background_normal='',
+        )
+        self.btn_immersive.bind(on_press=self._toggle_immersive)
+        sys_row.add_widget(self.btn_immersive)
+
+        btn_wifi = Button(
+            text='WiFi设置', font_size=dp(12),
+            background_color=(0.20, 0.45, 0.30, 1), background_normal='',
+        )
+        btn_wifi.bind(on_press=lambda _: _open_wifi_settings())
+        sys_row.add_widget(btn_wifi)
+
+        btn_eth = Button(
+            text='以太网', font_size=dp(12),
+            background_color=(0.20, 0.35, 0.45, 1), background_normal='',
+        )
+        btn_eth.bind(on_press=lambda _: _open_ethernet_settings())
+        sys_row.add_widget(btn_eth)
+
+        btn_chk_upd = Button(
+            text='检查更新', font_size=dp(12),
+            background_color=(0.38, 0.28, 0.50, 1), background_normal='',
+        )
+        btn_chk_upd.bind(on_press=self._manual_update)
+        sys_row.add_widget(btn_chk_upd)
+
+        btn_rollback = Button(
+            text='版本回滚', font_size=dp(12),
+            background_color=(0.50, 0.28, 0.12, 1), background_normal='',
+        )
+        btn_rollback.bind(on_press=self._rollback)
+        sys_row.add_widget(btn_rollback)
+
+        btn_reboot_dev = Button(
+            text='重启设备', font_size=dp(12),
+            background_color=(0.65, 0.12, 0.12, 1), background_normal='',
+        )
+        btn_reboot_dev.bind(on_press=self._reboot_device)
+        sys_row.add_widget(btn_reboot_dev)
+
+        root.add_widget(sys_row)
+
+        # ── 16路锁测试 ────────────────────────────────────────────────────────
         sv = ScrollView()
         grid = GridLayout(
-            cols=4, spacing=dp(8), padding=dp(2),
-            size_hint_y=None, row_default_height=dp(75), row_force_default=True,
+            cols=4, spacing=dp(6), padding=dp(2),
+            size_hint_y=None, row_default_height=dp(65), row_force_default=True,
         )
         grid.bind(minimum_height=grid.setter('height'))
         for i in range(1, 17):
             btn = Button(
-                text=f'锁{i:02d}\n测试', font_size=dp(15),
+                text=f'锁{i:02d}\n测试', font_size=dp(14),
                 background_color=(0.22, 0.50, 0.70, 1), background_normal='',
             )
             btn.bind(on_press=lambda b, n=i: self._test(n))
@@ -1243,21 +1469,16 @@ class AdminScreen(Screen):
         root.add_widget(sv)
 
         self.lbl_log = Label(
-            text='就绪', size_hint_y=None, height=dp(26),
+            text='就绪', size_hint_y=None, height=dp(24),
             font_size=dp(12), halign='left', valign='middle',
             color=(0.70, 0.70, 0.70, 1),
         )
         self.lbl_log.bind(size=self.lbl_log.setter('text_size'))
         root.add_widget(self.lbl_log)
 
-        bot = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(8))
-        self.lbl_info = Label(
-            text='', font_size=dp(11), halign='left',
-            color=(0.55, 0.55, 0.55, 1),
-        )
-        bot.add_widget(self.lbl_info)
+        bot = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
         btn_rst = Button(
-            text='重启App', font_size=dp(13), size_hint_x=0.18,
+            text='重启App', font_size=dp(13), size_hint_x=0.22,
             background_color=(0.65, 0.30, 0.08, 1), background_normal='',
         )
         btn_rst.bind(on_press=lambda _: App.get_running_app().restart_app())
@@ -1266,13 +1487,16 @@ class AdminScreen(Screen):
         self.add_widget(root)
 
     def on_enter(self):
-        self.lbl_info.text = f'设备ID: {cfg("device_id","--")}  v{LocalLogger.APP_VERSION}'
-        # refresh inputs from current config (may have been updated remotely)
+        _set_immersive(False)
+        self._immersive = False
+        self.btn_immersive.text = '全屏'
+        # refresh inputs from current config
         self.inp_port.text = cfg('port', '/dev/ttyS1')
         self.spn_baud.text = str(cfg('baudrate', 9600))
         self.inp_addr.text = str(cfg('board_addr', 1))
         self.inp_api.text  = cfg('api_base', 'http://192.168.1.100')
         self.inp_did.text  = cfg('device_id', '')
+        self.lbl_log.text  = f'v{LocalLogger.APP_VERSION}'
         if ctrl.connected:
             self.btn_conn.text = '断开'
             self.btn_conn.background_color = (0.70, 0.35, 0.08, 1)
@@ -1283,6 +1507,42 @@ class AdminScreen(Screen):
             self.btn_conn.background_color = (0.2, 0.55, 0.95, 1)
             self.lbl_conn.text = '未连接'
             self.lbl_conn.color = (0.9, 0.3, 0.3, 1)
+        threading.Thread(target=self._load_dev_info, daemon=True).start()
+
+    def _load_dev_info(self):
+        mac = _get_device_mac()
+        ip  = _get_ip()
+        aid = _get_android_id()
+        fw  = _get_firmware()
+        did = cfg('device_id', '--')
+        def _upd(_):
+            self.lbl_dev1.text = f'MAC: {mac or "--"}  IP: {ip or "--"}  设备ID: {did}'
+            self.lbl_dev2.text = f'Android ID: {aid or "--"}  固件: {fw}'
+        Clock.schedule_once(_upd)
+
+    def _toggle_immersive(self, *_):
+        self._immersive = not self._immersive
+        _set_immersive(self._immersive)
+        self.btn_immersive.text = '退出全屏' if self._immersive else '全屏'
+        self.lbl_log.text = ('已进入全屏' if self._immersive else '已退出全屏')
+
+    def _manual_update(self, *_):
+        self.lbl_log.text = '正在检查更新...'
+        def _run():
+            cfg_mgr.check_script_update()
+            Clock.schedule_once(lambda _: setattr(self.lbl_log, 'text', '更新检查完成'))
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _rollback(self, *_):
+        ok, msg = rollback_script()
+        self.lbl_log.text = msg
+        if ok:
+            Clock.schedule_once(lambda _: App.get_running_app().restart_app(), 1.5)
+
+    def _reboot_device(self, *_):
+        logger.warn('管理员触发重启设备')
+        self.lbl_log.text = '设备重启中...'
+        Clock.schedule_once(lambda _: _system_reboot(), 0.5)
 
     def _toggle_conn(self, *_):
         if ctrl.connected:
