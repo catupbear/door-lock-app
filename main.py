@@ -506,9 +506,14 @@ class RemoteConfigManager:
 
     def _loop(self):
         time.sleep(10)
+        _last_cfg_fetch = 0
         while self._running:
-            self._fetch()
-            time.sleep(300)
+            now = time.time()
+            if now - _last_cfg_fetch >= 300:
+                self._fetch()
+                _last_cfg_fetch = now
+            self.check_script_update()
+            time.sleep(60)
 
     def _fetch(self):
         resp = api.get_config()
@@ -544,6 +549,16 @@ class RemoteConfigManager:
             if status_cb:
                 Clock.schedule_once(lambda _: status_cb(msg))
 
+        # 直接从 Android getFilesDir() 获取可写路径，不依赖全局变量
+        try:
+            from jnius import autoclass as _ac
+            _ctx = _ac('org.kivy.android.PythonActivity').mActivity
+            _save_dir  = _ctx.getFilesDir().getAbsolutePath()
+        except Exception:
+            _save_dir  = os.path.dirname(_INTERNAL)
+        _save_path = os.path.join(_save_dir, 'door_lock_main.py')
+        _bak_path  = _save_path + '.bak'
+
         current = globals().get('_HOTUPDATE_VERSION') or LocalLogger.APP_VERSION
         resp = api.check_update(current)
         if not resp or resp.get('code') != 0:
@@ -559,7 +574,6 @@ class RemoteConfigManager:
         if not url or not REQUESTS_AVAILABLE:
             _cb('下载失败：网络库不可用')
             return
-        # 相对路径补全为完整 URL
         if url.startswith('/'):
             url = cfg('api_base', 'http://keyapi.wuhuxiche.com').rstrip('/') + url
         _cb(f'发现新版本 v{version}，下载中...')
@@ -573,12 +587,12 @@ class RemoteConfigManager:
                 logger.error(f'远程包MD5校验失败 v{version}')
                 _cb('下载失败：文件校验错误')
                 return
-            if os.path.exists(_INTERNAL):
+            if os.path.exists(_save_path):
                 try:
-                    shutil.copy2(_INTERNAL, _BACKUP_SCRIPT)
+                    shutil.copy2(_save_path, _bak_path)
                 except Exception:
                     pass
-            with open(_INTERNAL, 'wb') as f:
+            with open(_save_path, 'wb') as f:
                 f.write(content)
             logger.info(f'远程包已下载 v{version}，重启后生效')
             _cb(f'已下载 v{version}，正在重启...')
@@ -1979,12 +1993,20 @@ class BackgroundServices:
 class DoorLockApp(App):
     def build(self):
         Window.clearcolor = (0.08, 0.08, 0.10, 1)
-        # 用 Kivy 确定的可写目录覆盖 loader 阶段的路径猜测
+        # 用 Android getFilesDir() 获取内部存储路径（不受 SELinux 限制）
+        # user_data_dir 在部分设备上指向外部存储，会 Permission denied
+        _data_dir = self.user_data_dir
+        try:
+            from jnius import autoclass
+            _ctx = autoclass('org.kivy.android.PythonActivity').mActivity
+            _data_dir = _ctx.getFilesDir().getAbsolutePath()
+        except Exception:
+            pass
         global _INTERNAL, _LOG_PATH, _BACKUP_SCRIPT
-        _INTERNAL      = os.path.join(self.user_data_dir, 'door_lock_main.py')
-        _LOG_PATH       = os.path.join(self.user_data_dir, 'door_lock_loader.log')
+        _INTERNAL      = os.path.join(_data_dir, 'door_lock_main.py')
+        _LOG_PATH       = os.path.join(_data_dir, 'door_lock_loader.log')
         _BACKUP_SCRIPT  = _INTERNAL + '.bak'
-        _cfg_load(self.user_data_dir)
+        _cfg_load(_data_dir)
 
         global logger, reboot_mgr, cfg_mgr, poster_mgr
         logger = LocalLogger(os.path.join(self.user_data_dir, 'app.log'))
