@@ -1999,7 +1999,20 @@ class DoorLockApp(App):
         if cfg('port') and SERIAL_AVAILABLE:
             threading.Thread(target=self._auto_connect, daemon=True).start()
 
+        self._request_storage_permissions()
         return self.sm
+
+    def _request_storage_permissions(self):
+        try:
+            from android.permissions import request_permissions, Permission, check_permission
+            needed = [p for p in (
+                Permission.READ_EXTERNAL_STORAGE,
+                Permission.WRITE_EXTERNAL_STORAGE,
+            ) if not check_permission(p)]
+            if needed:
+                request_permissions(needed)
+        except Exception:
+            pass
 
     def _auto_connect(self):
         time.sleep(1)
