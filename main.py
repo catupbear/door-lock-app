@@ -78,6 +78,7 @@ for _font in [
 # ─── 配置管理 ─────────────────────────────────────────────────────────────────
 _CFG: dict = {}
 _CFG_FILE: str = ''
+_CFG_LOCK = threading.Lock()
 
 
 def _cfg_load(data_dir: str):
@@ -93,11 +94,12 @@ def _cfg_load(data_dir: str):
 
 def _cfg_save():
     if _CFG_FILE:
-        try:
-            with open(_CFG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(_CFG, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        with _CFG_LOCK:
+            try:
+                with open(_CFG_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(_CFG, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
 
 
 def cfg(key: str, default=None):
@@ -127,6 +129,8 @@ class LockController:
         self.last_error = ''
 
     def connect(self, port: str, baudrate: int = 9600):
+        if not SERIAL_AVAILABLE:
+            return False, 'pyserial 未安装'
         try:
             self._ser = serial.Serial(
                 port=port, baudrate=baudrate,
@@ -271,18 +275,22 @@ class LocalLogger:
         self._file = log_file
         self._lock = threading.Lock()
         self._pending: list = []
+        self._write_count = 0
 
     def _write(self, level: str, msg: str):
         ts = time.strftime('%Y-%m-%d %H:%M:%S')
         line = f'[{ts}][{level}] {msg}'
         with self._lock:
             self._pending.append(line)
+            self._write_count += 1
+            do_trim = self._write_count % 100 == 0
         try:
             with open(self._file, 'a', encoding='utf-8') as f:
                 f.write(line + '\n')
         except Exception:
             pass
-        self._trim()
+        if do_trim:
+            self._trim()
 
     def info(self, msg: str):  self._write('INFO', msg)
     def warn(self, msg: str):  self._write('WARN', msg)
@@ -544,7 +552,7 @@ class PosterManager:
             url  = item.get('url', '')
             md5  = item.get('md5', '')
             sched = item.get('schedule', {})
-            if not url or not REQUESTS_AVAILABLE:
+            if not pid or not url or not REQUESTS_AVAILABLE:
                 continue
             local = os.path.join(self._dir, f'{pid}.jpg')
             if not (os.path.exists(local) and self._md5(local) == md5):
@@ -948,7 +956,7 @@ class PasswordScreen(Screen):
             if verify_offline_password(pwd, lock_no):
                 self._errors = 0
                 logger.info(f'离线验证成功，锁{lock_no}')
-                Clock.schedule_once(lambda _: self._do_open(lock_no, 1))
+                Clock.schedule_once(lambda _, ln=lock_no: self._do_open(ln, 1))
                 return
         self._errors += 1
         max_e = cfg('max_error_count', 5)
@@ -1259,11 +1267,22 @@ class AdminScreen(Screen):
 
     def on_enter(self):
         self.lbl_info.text = f'设备ID: {cfg("device_id","--")}  v{LocalLogger.APP_VERSION}'
+        # refresh inputs from current config (may have been updated remotely)
+        self.inp_port.text = cfg('port', '/dev/ttyS1')
+        self.spn_baud.text = str(cfg('baudrate', 9600))
+        self.inp_addr.text = str(cfg('board_addr', 1))
+        self.inp_api.text  = cfg('api_base', 'http://192.168.1.100')
+        self.inp_did.text  = cfg('device_id', '')
         if ctrl.connected:
             self.btn_conn.text = '断开'
             self.btn_conn.background_color = (0.70, 0.35, 0.08, 1)
             self.lbl_conn.text = '已连接'
             self.lbl_conn.color = (0.2, 0.85, 0.35, 1)
+        else:
+            self.btn_conn.text = '连接'
+            self.btn_conn.background_color = (0.2, 0.55, 0.95, 1)
+            self.lbl_conn.text = '未连接'
+            self.lbl_conn.color = (0.9, 0.3, 0.3, 1)
 
     def _toggle_conn(self, *_):
         if ctrl.connected:
