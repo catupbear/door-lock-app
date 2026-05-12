@@ -949,7 +949,7 @@ class InitWaitScreen(Screen):
 
 # ─── 海报轮播页 ───────────────────────────────────────────────────────────────
 class PosterScreen(Screen):
-    _ADMIN_HOLD = 5
+    _ADMIN_HOLD = 3
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -1048,15 +1048,20 @@ class PosterScreen(Screen):
 
     def on_touch_down(self, touch):
         self._touch_x = touch.x
+        self._touch_y = touch.y
         w, h = Window.size
         if touch.x > w * 0.85 and touch.y < h * 0.15:
             self._admin_ev = Clock.schedule_once(self._go_admin, self._ADMIN_HOLD)
         return super().on_touch_down(touch)
 
     def on_touch_up(self, touch):
+        was_admin_press = self._admin_ev is not None
         if self._admin_ev:
             self._admin_ev.cancel()
             self._admin_ev = None
+        # 如果是管理员区域的长按，不触发密码页跳转
+        if was_admin_press:
+            return super().on_touch_up(touch)
         dx = touch.x - self._touch_x
         p = poster_mgr.posters
         if p and abs(dx) > dp(80):
@@ -1123,10 +1128,10 @@ class PasswordScreen(Screen):
             size_hint=(None, None), size=(dp(320), dp(270)),
             pos_hint={'center_x': 0.5, 'y': 0.03},
         )
-        for key in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✓']:
+        for key in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '删', '0', '确认']:
             c = (
-                (0.80, 0.20, 0.20, 1) if key == '⌫' else
-                (0.18, 0.62, 0.28, 1) if key == '✓' else
+                (0.80, 0.20, 0.20, 1) if key == '删' else
+                (0.18, 0.62, 0.28, 1) if key == '确认' else
                 (0.22, 0.22, 0.28, 1)
             )
             b = Button(text=key, font_size=dp(26), background_normal='', background_color=c)
@@ -1163,10 +1168,10 @@ class PasswordScreen(Screen):
 
     def _key(self, k: str):
         self._remaining = cfg('idle_timeout', 60)
-        if k == '⌫':
+        if k == '删':
             self._pwd = self._pwd[:-1]
             self._update_disp()
-        elif k == '✓':
+        elif k == '确认':
             self._submit()
         elif len(self._pwd) < self._MAX:
             self._pwd += k
@@ -1353,10 +1358,10 @@ class AdminAuthScreen(Screen):
             size_hint=(None, None), size=(dp(290), dp(240)),
             pos_hint={'center_x': 0.5, 'y': 0.04},
         )
-        for key in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✓']:
+        for key in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '删', '0', '确认']:
             c = (
-                (0.75, 0.20, 0.20, 1) if key == '⌫' else
-                (0.18, 0.52, 0.22, 1) if key == '✓' else
+                (0.75, 0.20, 0.20, 1) if key == '删' else
+                (0.18, 0.52, 0.22, 1) if key == '确认' else
                 (0.22, 0.22, 0.28, 1)
             )
             b = Button(text=key, font_size=dp(22), background_normal='', background_color=c)
@@ -1375,9 +1380,9 @@ class AdminAuthScreen(Screen):
         self.lbl_pwd.text = ('●' * n + '_ ' * (6 - n)).strip()
 
     def _key(self, k: str):
-        if k == '⌫':
+        if k == '删':
             self._pwd = self._pwd[:-1]
-        elif k == '✓':
+        elif k == '确认':
             if self._pwd == cfg('admin_password', '888888'):
                 App.get_running_app().sm.current = 'admin'
             else:
