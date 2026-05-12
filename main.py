@@ -1592,22 +1592,18 @@ class AdminScreen(Screen):
 
         root.add_widget(sys_row)
 
-        # ── 16路锁测试 ────────────────────────────────────────────────────────
-        sv = ScrollView()
-        grid = GridLayout(
-            cols=4, spacing=dp(6), padding=dp(2),
-            size_hint_y=None, row_default_height=dp(65), row_force_default=True,
+        # ── 锁测试（6路）────────────────────────────────────────────────────
+        lock_row = BoxLayout(
+            size_hint_y=None, height=dp(72), spacing=dp(8),
         )
-        grid.bind(minimum_height=grid.setter('height'))
-        for i in range(1, 17):
+        for i in range(1, 7):
             btn = Button(
-                text=f'锁{i:02d}\n测试', font_size=dp(14),
-                background_color=(0.22, 0.50, 0.70, 1), background_normal='',
+                text=f'锁{i:02d}\n测试', font_size=dp(15), bold=True,
+                background_color=(0.18, 0.48, 0.72, 1), background_normal='',
             )
             btn.bind(on_press=lambda b, n=i: self._test(n))
-            grid.add_widget(btn)
-        sv.add_widget(grid)
-        root.add_widget(sv)
+            lock_row.add_widget(btn)
+        root.add_widget(lock_row)
 
         self.lbl_log = Label(
             text='就绪', size_hint_y=None, height=dp(24),

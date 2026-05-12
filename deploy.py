@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """
-热更新部署脚本
+热更新部署脚本（SSH直传，无需开放额外端口）
 用法: python3 deploy.py <版本号>
 示例: python3 deploy.py HU-20260513
 """
 import hashlib
+import json
 import os
 import sys
-import subprocess
 
-SERVER   = 'http://keyapi.wuhuxiche.com:5000'
-TOKEN    = 'dl_admin_2026'   # 与服务器 UPLOAD_TOKEN 保持一致
-SRC      = os.path.join(os.path.dirname(__file__), 'main.py')
-OUT      = '/tmp/door_lock_main_hu.py'
+SERVER_HOST = '43.136.92.192'
+SERVER_USER = 'root'
+SERVER_PASS = 'B1Y#6Undefgt'
+SERVER_DIR  = '/root/door_lock_server'
 
-def generate_hotupdate(version: str):
-    """从 main.py 生成无加载器的热更新文件"""
+SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'main.py')
+
+
+def generate_hotupdate(version: str) -> bytes:
     with open(SRC, 'r', encoding='utf-8') as f:
         content = f.read()
     marker = '\n_HOTUPDATE_VERSION = None  # 热更新文件会将此值覆盖为版本字符串\n'
@@ -32,34 +34,42 @@ _LOG_PATH  = _os.path.join(_os.path.expanduser('~'), 'door_lock_loader.log')
 _loader_messages = []
 _HOTUPDATE_VERSION = "{version}"
 '''
-    result = header + content[idx:]
-    with open(OUT, 'w', encoding='utf-8') as f:
-        f.write(result)
-    md5 = hashlib.md5(result.encode()).hexdigest()
-    print(f'生成热更新文件: {len(result.splitlines())} 行，MD5: {md5}')
-    return OUT
+    result = (header + content[idx:]).encode('utf-8')
+    print(f'生成热更新文件: {len(result.splitlines())} 行，MD5: {hashlib.md5(result).hexdigest()}')
+    return result
 
-def upload(version: str, filepath: str):
-    """上传到服务器"""
-    print(f'上传到 {SERVER} ...')
-    cmd = [
-        'curl', '-sf',
-        '-F', f'file=@{filepath}',
-        '-F', f'version={version}',
-        '-H', f'X-Token: {TOKEN}',
-        f'{SERVER}/api/admin/upload-script',
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f'上传失败: {result.stderr}')
+
+def deploy(version: str):
+    try:
+        import paramiko
+    except ImportError:
+        print('请先安装 paramiko: pip3 install paramiko')
         sys.exit(1)
-    print(f'服务器响应: {result.stdout}')
-    print(f'\n完成！设备点「检查更新」即可拉取 {version}')
+
+    script = generate_hotupdate(version)
+    md5 = hashlib.md5(script).hexdigest()
+    meta = json.dumps({'version': version, 'md5': md5, 'size': len(script)},
+                      ensure_ascii=False)
+
+    print(f'连接服务器 {SERVER_HOST} ...')
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(SERVER_HOST, username=SERVER_USER, password=SERVER_PASS, timeout=15)
+
+    sftp = ssh.open_sftp()
+    with sftp.open(f'{SERVER_DIR}/door_lock_main.py', 'wb') as f:
+        f.write(script)
+    with sftp.open(f'{SERVER_DIR}/door_lock_meta.json', 'w') as f:
+        f.write(meta)
+    sftp.close()
+    ssh.close()
+
+    print(f'部署完成！版本: {version}')
+    print(f'设备进管理界面点「检查更新」即可自动更新')
+
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)
-    version = sys.argv[1]
-    fp = generate_hotupdate(version)
-    upload(version, fp)
+    deploy(sys.argv[1])
