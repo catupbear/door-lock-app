@@ -19,6 +19,9 @@ android.archs = armeabi-v7a
 # 串口访问权限
 android.permissions = READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, INTERNET
 
+# Android 9+ 默认禁止 HTTP 明文流量，必须显式允许；Android 10 需要 legacyExternalStorage 才能访问 /sdcard/
+android.manifest_application_fields = android:usesCleartextTraffic="true" android:requestLegacyExternalStorage="true"
+
 
 [buildozer]
 log_level = 2

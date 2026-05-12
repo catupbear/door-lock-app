@@ -474,7 +474,7 @@ class RemoteConfigManager:
         url = d.get('url', '')
         md5 = d.get('md5', '')
         version = d.get('version', '')
-        if not url:
+        if not url or not REQUESTS_AVAILABLE:
             return
         try:
             r = _req.get(url, timeout=30)
@@ -544,7 +544,7 @@ class PosterManager:
             url  = item.get('url', '')
             md5  = item.get('md5', '')
             sched = item.get('schedule', {})
-            if not url:
+            if not url or not REQUESTS_AVAILABLE:
                 continue
             local = os.path.join(self._dir, f'{pid}.jpg')
             if not (os.path.exists(local) and self._md5(local) == md5):
@@ -1062,16 +1062,6 @@ class AdminAuthScreen(Screen):
         self._pwd = ''
         root = FloatLayout()
         _dark_bg(root, 0.08, 0.08, 0.10)
-        Button(
-            text='← 取消', font_size=dp(15),
-            size_hint=(None, None), size=(dp(100), dp(40)),
-            pos_hint={'x': 0.02, 'top': 0.97},
-            background_color=(0.28, 0.28, 0.33, 1), background_normal='',
-        ).bind(on_press=lambda _: App.get_running_app().go_poster())
-        root.add_widget(root.children[0] if root.children else Label())  # placeholder trick
-        # Rebuild properly
-        root.clear_widgets()
-        _dark_bg(root, 0.08, 0.08, 0.10)
         btn_back = Button(
             text='← 取消', font_size=dp(15),
             size_hint=(None, None), size=(dp(100), dp(40)),
@@ -1574,9 +1564,23 @@ class DoorLockApp(App):
     def restart_app(self):
         logger.info('正在重启App...')
         try:
-            os.execl(sys.executable, sys.executable, *sys.argv)
-        except Exception:
+            # Android：用系统 Intent 重启，os.execl 在 Android 上无效
+            from jnius import autoclass
+            Intent = autoclass('android.content.Intent')
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            activity = PythonActivity.mActivity
+            intent = activity.getPackageManager().getLaunchIntentForPackage(
+                activity.getPackageName()
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            activity.startActivity(intent)
             self.stop()
+        except Exception:
+            # 桌面端 fallback
+            try:
+                os.execl(sys.executable, sys.executable, *sys.argv)
+            except Exception:
+                self.stop()
 
     def go_poster(self):
         self.sm.current = 'poster'
