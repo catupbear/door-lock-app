@@ -40,9 +40,10 @@ if globals().get('__file__', '') != _INTERNAL:
                 _shutil.copy2(_direct, _INTERNAL)
                 _found = True
                 _loader_log('复制成功')
+                break  # 复制成功才跳出
             except Exception as _ce:
-                _loader_log(f'复制失败: {_ce}')
-            break
+                _loader_log(f'复制失败: {_ce}，继续搜索')
+                continue  # 复制失败则跳到下一个搜索根
         try:
             for _sub in _os.listdir(_root):
                 _p = _os.path.join(_root, _sub, _FNAME)
