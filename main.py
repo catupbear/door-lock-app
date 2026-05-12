@@ -641,7 +641,30 @@ cfg_mgr:    RemoteConfigManager  = None  # type: ignore
 poster_mgr: PosterManager        = None  # type: ignore
 
 
+def _has_net_iface() -> bool:
+    """检测物理网络是否已接入（读网卡状态，不依赖服务器或外网）。"""
+    for iface in ['wlan0', 'eth0', 'eth1', 'rmnet0']:
+        try:
+            with open(f'/sys/class/net/{iface}/operstate') as f:
+                if f.read().strip() == 'up':
+                    return True
+        except Exception:
+            pass
+    # 备用：UDP connect 技巧，让 OS 选路由
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0)
+        s.connect(('10.255.255.255', 1))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip not in ('0.0.0.0', '127.0.0.1', '')
+    except Exception:
+        return False
+
+
 def _check_network() -> bool:
+    """检测能否访问 API 服务器（断网重启/日志上传使用）。"""
     if not REQUESTS_AVAILABLE:
         return False
     try:
@@ -784,33 +807,70 @@ def rollback_script() -> tuple:
 
 # ─── 初始化等待页 ─────────────────────────────────────────────────────────────
 class InitWaitScreen(Screen):
+    _ADMIN_HOLD = 5
+
     def __init__(self, **kw):
         super().__init__(**kw)
+        self._admin_ev = None
         root = FloatLayout()
         _dark_bg(root, 0.08, 0.08, 0.10)
+
         self.lbl_title = Label(
             text='⏳ 设备初始化中', font_size=dp(28), bold=True,
-            pos_hint={'center_x': 0.5, 'center_y': 0.62},
+            pos_hint={'center_x': 0.5, 'center_y': 0.72},
             size_hint=(None, None), size=(dp(500), dp(55)), halign='center',
         )
-        self.lbl_hint = Label(
-            text='请确保设备已连接网络', font_size=dp(18),
-            pos_hint={'center_x': 0.5, 'center_y': 0.52},
-            size_hint=(None, None), size=(dp(500), dp(40)), halign='center',
+        self.lbl_net = Label(
+            text='网络：检测中...', font_size=dp(16),
+            pos_hint={'center_x': 0.5, 'center_y': 0.60},
+            size_hint=(None, None), size=(dp(560), dp(35)), halign='center',
+        )
+        self.lbl_srv = Label(
+            text='服务器：--', font_size=dp(15),
+            pos_hint={'center_x': 0.5, 'center_y': 0.51},
+            size_hint=(None, None), size=(dp(560), dp(32)), halign='center',
             color=(0.75, 0.75, 0.75, 1),
         )
-        self.lbl_net = Label(
-            text='网络状态：检测中...', font_size=dp(16),
-            pos_hint={'center_x': 0.5, 'center_y': 0.43},
-            size_hint=(None, None), size=(dp(500), dp(35)), halign='center',
+
+        # API 地址快捷配置（困在此页时可直接修改，无需进管理员页）
+        api_row = BoxLayout(
+            orientation='horizontal', spacing=dp(6),
+            size_hint=(None, None), size=(dp(560), dp(40)),
+            pos_hint={'center_x': 0.5, 'center_y': 0.40},
         )
+        api_row.add_widget(Label(text='服务器地址:', font_size=dp(13),
+                                  size_hint_x=None, width=dp(100)))
+        self.inp_api_init = TextInput(
+            text=cfg('api_base', 'http://192.168.1.100'),
+            multiline=False, font_size=dp(13),
+        )
+        api_row.add_widget(self.inp_api_init)
+        btn_apply = Button(
+            text='应用', font_size=dp(13), size_hint_x=None, width=dp(70),
+            background_color=(0.2, 0.48, 0.2, 1), background_normal='',
+        )
+        btn_apply.bind(on_press=self._apply_api)
+        api_row.add_widget(btn_apply)
+        root.add_widget(api_row)
+
         self.lbl_cd = Label(
-            text='', font_size=dp(15),
-            pos_hint={'center_x': 0.5, 'center_y': 0.34},
+            text='', font_size=dp(14),
+            pos_hint={'center_x': 0.5, 'center_y': 0.28},
             size_hint=(None, None), size=(dp(400), dp(30)), halign='center',
             color=(0.55, 0.55, 0.55, 1),
         )
-        for w in (self.lbl_title, self.lbl_hint, self.lbl_net, self.lbl_cd):
+
+        # 右下角长按提示（进管理员页）
+        self.lbl_admin_hint = Label(
+            text='长按右下角5秒进入管理',
+            font_size=dp(11),
+            pos_hint={'right': 0.99, 'y': 0.01},
+            size_hint=(None, None), size=(dp(200), dp(24)),
+            halign='right', color=(0.35, 0.35, 0.35, 1),
+        )
+
+        for w in (self.lbl_title, self.lbl_net, self.lbl_srv,
+                  self.lbl_cd, self.lbl_admin_hint):
             root.add_widget(w)
         self.add_widget(root)
 
@@ -822,6 +882,9 @@ class InitWaitScreen(Screen):
     def on_leave(self):
         if hasattr(self, '_ticker'):
             self._ticker.cancel()
+        if self._admin_ev:
+            self._admin_ev.cancel()
+            self._admin_ev = None
 
     def _tick(self, dt):
         self._countdown -= 1
@@ -830,10 +893,35 @@ class InitWaitScreen(Screen):
             self._countdown = 30
             self._try_init()
 
+    def _apply_api(self, *_):
+        url = self.inp_api_init.text.strip().rstrip('/')
+        if url:
+            cfg_set('api_base', url)
+            self.lbl_srv.text = f'服务器已更新：{url}'
+            self._countdown = 1   # 下一秒立即重试
+
     def _try_init(self):
         threading.Thread(target=self._do_init, daemon=True).start()
 
     def _do_init(self):
+        has_iface = _has_net_iface()
+        can_reach = _check_network()
+        def _show_net(_):
+            if has_iface:
+                self.lbl_net.text  = '网络：✅ WiFi/以太网已连接'
+                self.lbl_net.color = (0.2, 0.9, 0.4, 1)
+            else:
+                self.lbl_net.text  = '网络：❌ 未检测到网络接口'
+                self.lbl_net.color = (0.9, 0.35, 0.35, 1)
+            base = cfg('api_base', 'http://192.168.1.100')
+            if can_reach:
+                self.lbl_srv.text  = f'服务器：✅ {base} 可访问'
+                self.lbl_srv.color = (0.2, 0.9, 0.4, 1)
+            else:
+                self.lbl_srv.text  = f'服务器：❌ {base} 无响应'
+                self.lbl_srv.color = (0.9, 0.60, 0.20, 1)
+        Clock.schedule_once(_show_net)
+
         mac = _get_device_mac()
         android_id = _get_android_id()
         resp = api.init_device(mac, android_id)
@@ -843,16 +931,22 @@ class InitWaitScreen(Screen):
             cfg_set('device_secret', d.get('device_secret', ''))
             logger.info(f'设备初始化成功: {d["device_id"]}')
             Clock.schedule_once(lambda _: App.get_running_app().go_poster())
-            return
-        online = _check_network()
-        def _upd(_):
-            if online:
-                self.lbl_net.text = '网络状态：✅ 已连接（服务器无响应）'
-                self.lbl_net.color = (0.9, 0.75, 0.2, 1)
-            else:
-                self.lbl_net.text = '网络状态：❌ 未连接'
-                self.lbl_net.color = (0.9, 0.35, 0.35, 1)
-        Clock.schedule_once(_upd)
+
+    # 右下角长按5秒 → 管理员页
+    def on_touch_down(self, touch):
+        w, h = Window.size
+        if touch.x > w * 0.85 and touch.y < h * 0.15:
+            self._admin_ev = Clock.schedule_once(
+                lambda _: setattr(App.get_running_app().sm, 'current', 'admin_auth'),
+                self._ADMIN_HOLD,
+            )
+        return super().on_touch_down(touch)
+
+    def on_touch_up(self, touch):
+        if self._admin_ev:
+            self._admin_ev.cancel()
+            self._admin_ev = None
+        return super().on_touch_up(touch)
 
 
 # ─── 海报轮播页 ───────────────────────────────────────────────────────────────
