@@ -5,21 +5,41 @@
 # ─── 热更新加载器（必须最先执行） ──────────────────────────────────────────────
 import os as _os, runpy as _runpy, shutil as _shutil
 _INTERNAL = _os.path.join(_os.path.expanduser('~'), 'door_lock_main.py')
-_USB_PATHS = [
-    '/sdcard/door_lock_main.py',
-    '/storage/emulated/0/door_lock_main.py',
-    '/storage/self/primary/door_lock_main.py',
-]
-for _src in _USB_PATHS:
-    if _os.path.exists(_src):
-        _shutil.copy2(_src, _INTERNAL)
-        break
-if _os.path.exists(_INTERNAL):
-    _runpy.run_path(_INTERNAL, run_name='__main__')
-    raise SystemExit
+
+# 防递归：当本文件通过 runpy.run_path(_INTERNAL) 被加载时，
+# __file__ 会被设置为 _INTERNAL，此时跳过加载器避免无限递归。
+# 此方案无需依赖旧 APK 设置任何环境变量，兼容所有版本。
+if globals().get('__file__', '') != _INTERNAL:
+    _FNAME = 'door_lock_main.py'
+    _SEARCH_ROOTS = [
+        '/sdcard', '/storage/emulated/0', '/storage/self/primary',
+        '/storage', '/mnt/usb', '/mnt/usb_storage', '/mnt/media_rw',
+        '/mnt/sdcard', '/mnt/extSdCard',
+    ]
+    _found = False
+    for _root in _SEARCH_ROOTS:
+        _direct = _os.path.join(_root, _FNAME)
+        if _os.path.exists(_direct):
+            _shutil.copy2(_direct, _INTERNAL)
+            _found = True
+            break
+        # 扫描一层子目录（覆盖 /storage/xxxx-xxxx/ UUID 挂载点）
+        try:
+            for _sub in _os.listdir(_root):
+                _p = _os.path.join(_root, _sub, _FNAME)
+                if _os.path.exists(_p):
+                    _shutil.copy2(_p, _INTERNAL)
+                    _found = True
+                    break
+        except Exception:
+            pass
+        if _found:
+            break
+    if _os.path.exists(_INTERNAL):
+        _runpy.run_path(_INTERNAL, run_name='__main__')
+        raise SystemExit
 
 # ─── 标准库 ───────────────────────────────────────────────────────────────────
-import base64
 import hashlib
 import hmac
 import json
@@ -79,26 +99,6 @@ for _font in [
         except Exception:
             pass
 
-# ─── 配置加密（XOR+Base64，防止明文篡改） ─────────────────────────────────────
-_CFG_KEY = b'DoorLockKiosk@2024!'
-
-
-def _xor(data: bytes) -> bytes:
-    k = _CFG_KEY
-    return bytes(data[i] ^ k[i % len(k)] for i in range(len(data)))
-
-
-def _cfg_encode(d: dict) -> bytes:
-    return base64.b64encode(_xor(json.dumps(d, ensure_ascii=False).encode()))
-
-
-def _cfg_decode(raw: bytes) -> dict:
-    stripped = raw.lstrip()
-    if stripped.startswith(b'{'):
-        return json.loads(raw)          # 旧格式明文 JSON，向后兼容
-    return json.loads(_xor(base64.b64decode(raw)))
-
-
 # ─── 配置管理 ─────────────────────────────────────────────────────────────────
 _CFG: dict = {}
 _CFG_FILE: str = ''
@@ -110,8 +110,8 @@ def _cfg_load(data_dir: str):
     _CFG_FILE = os.path.join(data_dir, 'config.json')
     if os.path.exists(_CFG_FILE):
         try:
-            with open(_CFG_FILE, 'rb') as f:
-                _CFG = _cfg_decode(f.read())
+            with open(_CFG_FILE, encoding='utf-8') as f:
+                _CFG = json.load(f)
         except Exception:
             _CFG = {}
 
@@ -120,10 +120,8 @@ def _cfg_save():
     if _CFG_FILE:
         with _CFG_LOCK:
             try:
-                tmp = _CFG_FILE + '.tmp'
-                with open(tmp, 'wb') as f:
-                    f.write(_cfg_encode(_CFG))
-                os.replace(tmp, _CFG_FILE)
+                with open(_CFG_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(_CFG, f, ensure_ascii=False, indent=2)
             except Exception:
                 pass
 
