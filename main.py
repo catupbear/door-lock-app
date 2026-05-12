@@ -5,8 +5,11 @@
 # ─── 热更新加载器（必须最先执行） ──────────────────────────────────────────────
 import os as _os, runpy as _runpy, shutil as _shutil, time as _time
 
-_INTERNAL  = _os.path.join(_os.path.expanduser('~'), 'door_lock_main.py')
-_LOG_PATH  = _os.path.join(_os.path.expanduser('~'), 'door_lock_loader.log')
+# Android 上 HOME=/data 不可写，优先使用 App 实际沙盒目录
+_APP_DATA_DIR = '/data/data/org.doorlock.doorlock/files'
+_BASE_DIR     = _APP_DATA_DIR if _os.path.isdir(_APP_DATA_DIR) else _os.path.expanduser('~')
+_INTERNAL  = _os.path.join(_BASE_DIR, 'door_lock_main.py')
+_LOG_PATH  = _os.path.join(_BASE_DIR, 'door_lock_loader.log')
 _loader_messages = []  # 内存日志，不依赖文件写权限
 
 def _loader_log(msg):
@@ -535,30 +538,40 @@ class RemoteConfigManager:
                 cfg_set(k, data[k])
         logger.info('远程配置已同步')
 
-    def check_script_update(self):
+    def check_script_update(self, status_cb=None):
         """检查并下载新版Python脚本，重启后生效"""
+        def _cb(msg):
+            if status_cb:
+                Clock.schedule_once(lambda _: status_cb(msg))
+
         current = globals().get('_HOTUPDATE_VERSION') or LocalLogger.APP_VERSION
         resp = api.check_update(current)
         if not resp or resp.get('code') != 0:
+            _cb('检查失败：无法连接服务器')
             return
         d = resp.get('data', {})
         if not d.get('has_update'):
+            _cb('已是最新版本')
             return
         url = d.get('url', '')
         md5 = d.get('md5', '')
         version = d.get('version', '')
         if not url or not REQUESTS_AVAILABLE:
+            _cb('下载失败：网络库不可用')
             return
         # 相对路径补全为完整 URL
         if url.startswith('/'):
             url = cfg('api_base', 'http://keyapi.wuhuxiche.com').rstrip('/') + url
+        _cb(f'发现新版本 v{version}，下载中...')
         try:
             r = _req.get(url, timeout=30)
             if r.status_code != 200:
+                _cb(f'下载失败：HTTP {r.status_code}')
                 return
             content = r.content
             if md5 and hashlib.md5(content).hexdigest() != md5:
                 logger.error(f'远程包MD5校验失败 v{version}')
+                _cb('下载失败：文件校验错误')
                 return
             if os.path.exists(_INTERNAL):
                 try:
@@ -568,9 +581,11 @@ class RemoteConfigManager:
             with open(_INTERNAL, 'wb') as f:
                 f.write(content)
             logger.info(f'远程包已下载 v{version}，重启后生效')
+            _cb(f'已下载 v{version}，正在重启...')
             Clock.schedule_once(lambda _: App.get_running_app().restart_app(), 2)
         except Exception as e:
             logger.error(f'远程包下载失败: {e}')
+            _cb(f'下载失败：{e}')
 
 
 # ─── 离线密码引擎 ─────────────────────────────────────────────────────────────
@@ -1701,9 +1716,10 @@ class AdminScreen(Screen):
 
     def _manual_update(self, *_):
         self.lbl_log.text = '正在检查更新...'
+        def _set(msg):
+            self.lbl_log.text = msg
         def _run():
-            cfg_mgr.check_script_update()
-            Clock.schedule_once(lambda _: setattr(self.lbl_log, 'text', '更新检查完成'))
+            cfg_mgr.check_script_update(status_cb=_set)
         threading.Thread(target=_run, daemon=True).start()
 
     def _rollback(self, *_):
@@ -1963,6 +1979,11 @@ class BackgroundServices:
 class DoorLockApp(App):
     def build(self):
         Window.clearcolor = (0.08, 0.08, 0.10, 1)
+        # 用 Kivy 确定的可写目录覆盖 loader 阶段的路径猜测
+        global _INTERNAL, _LOG_PATH, _BACKUP_SCRIPT
+        _INTERNAL      = os.path.join(self.user_data_dir, 'door_lock_main.py')
+        _LOG_PATH       = os.path.join(self.user_data_dir, 'door_lock_loader.log')
+        _BACKUP_SCRIPT  = _INTERNAL + '.bak'
         _cfg_load(self.user_data_dir)
 
         global logger, reboot_mgr, cfg_mgr, poster_mgr
@@ -2029,19 +2050,31 @@ class DoorLockApp(App):
     def restart_app(self):
         logger.info('正在重启App...')
         try:
-            # Android：用系统 Intent 重启，os.execl 在 Android 上无效
             from jnius import autoclass
-            Intent = autoclass('android.content.Intent')
+            Intent         = autoclass('android.content.Intent')
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            Process        = autoclass('android.os.Process')
+            AlarmManager   = autoclass('android.app.AlarmManager')
+            PendingIntent  = autoclass('android.app.PendingIntent')
+            SystemClock    = autoclass('android.os.SystemClock')
+
             activity = PythonActivity.mActivity
             intent = activity.getPackageManager().getLaunchIntentForPackage(
                 activity.getPackageName()
             )
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            activity.startActivity(intent)
-            self.stop()
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP)
+
+            # FLAG_UPDATE_CURRENT=0x08000000, FLAG_IMMUTABLE=0x04000000
+            pi = PendingIntent.getActivity(
+                activity, 0, intent, 0x08000000 | 0x04000000
+            )
+            # 用 AlarmManager 在 1.5 秒后启动 Activity，此时进程已死但系统会开新进程
+            am = activity.getSystemService('alarm')
+            am.setExact(AlarmManager.ELAPSED_REALTIME,
+                        SystemClock.elapsedRealtime() + 1500, pi)
+            Process.killProcess(Process.myPid())
         except Exception:
-            # 桌面端 fallback
             try:
                 os.execl(sys.executable, sys.executable, *sys.argv)
             except Exception:
