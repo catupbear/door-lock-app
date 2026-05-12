@@ -5,13 +5,17 @@
 # ─── 热更新加载器（必须最先执行） ──────────────────────────────────────────────
 import os as _os, runpy as _runpy, shutil as _shutil, time as _time
 
-_INTERNAL = _os.path.join(_os.path.expanduser('~'), 'door_lock_main.py')
+_INTERNAL  = _os.path.join(_os.path.expanduser('~'), 'door_lock_main.py')
 _LOG_PATH  = _os.path.join(_os.path.expanduser('~'), 'door_lock_loader.log')
+_loader_messages = []  # 内存日志，不依赖文件写权限
 
 def _loader_log(msg):
-    try:
+    _ts = _time.strftime('%H:%M:%S')
+    _line = f'[{_ts}] {msg}'
+    _loader_messages.append(_line)
+    try:  # 顺便写文件（可能失败，不影响内存日志）
         with open(_LOG_PATH, 'a', encoding='utf-8') as _f:
-            _f.write(f"[{_time.strftime('%H:%M:%S')}] {msg}\n")
+            _f.write(_line + '\n')
     except Exception:
         pass
 
@@ -22,8 +26,12 @@ if globals().get('__file__', '') != _INTERNAL:
         '/storage', '/mnt/usb', '/mnt/usb_storage', '/mnt/media_rw',
         '/mnt/sdcard', '/mnt/extSdCard', '/mnt/udisk', '/udisk',
     ]
+    _loader_log(f'=== 加载器启动 HOME={_os.path.expanduser("~")} ===')
+    try:
+        _loader_log(f'/storage/: {_os.listdir("/storage")}')
+    except Exception as _le:
+        _loader_log(f'/storage/ 无法列出: {_le}')
     _found = False
-    _loader_log('=== 加载器启动 ===')
     for _root in _SEARCH_ROOTS:
         _direct = _os.path.join(_root, _FNAME)
         if _os.path.exists(_direct):
@@ -1662,14 +1670,18 @@ class AdminScreen(Screen):
         self.lbl_log.text = ('已进入全屏' if self._immersive else '已退出全屏')
 
     def _show_hu_log(self, *_):
-        try:
-            with open(_LOG_PATH, 'r', encoding='utf-8') as _f:
-                _lines = _f.readlines()
-            content = ''.join(_lines[-20:]).strip() or '（日志为空）'
-        except FileNotFoundError:
-            content = '（暂无热更新日志，首次运行或日志已清除）'
-        except Exception as _e:
-            content = f'读取失败: {_e}'
+        # 优先读内存日志（同进程，无需文件权限）
+        msgs = globals().get('_loader_messages', [])
+        if msgs:
+            content = '\n'.join(msgs[-25:])
+        else:
+            try:
+                with open(_LOG_PATH, 'r', encoding='utf-8') as _f:
+                    content = ''.join(_f.readlines()[-25:]).strip()
+            except FileNotFoundError:
+                content = f'内存日志为空，文件也不存在\n路径: {_LOG_PATH}'
+            except Exception as _e:
+                content = f'读取失败: {_e}'
         from kivy.uix.popup import Popup
         from kivy.uix.scrollview import ScrollView as _SV
         lbl = Label(
@@ -1677,12 +1689,12 @@ class AdminScreen(Screen):
             size_hint_y=None, markup=False,
         )
         lbl.bind(texture_size=lambda w, s: setattr(w, 'height', s[1]))
-        lbl.bind(width=lambda w, _: setattr(w, 'text_size', (w.width, None)))
+        lbl.bind(width=lambda w, _v: setattr(w, 'text_size', (w.width, None)))
         sv = _SV()
         sv.add_widget(lbl)
         pop = Popup(
             title='热更新加载日志', content=sv,
-            size_hint=(0.9, 0.7),
+            size_hint=(0.9, 0.75),
         )
         pop.open()
 
