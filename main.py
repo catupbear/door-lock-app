@@ -690,6 +690,15 @@ class PosterManager:
         if new_items:
             with self._rlock:
                 self._items = new_items
+            Clock.schedule_once(lambda _: self._notify_poster_screen())
+
+    def _notify_poster_screen(self):
+        try:
+            app = App.get_running_app()
+            if app.sm.current == 'poster':
+                app.sm.get_screen('poster')._reload()
+        except Exception:
+            pass
             logger.info(f'海报已更新，共{len(new_items)}张')
 
     def _load_cached(self):
