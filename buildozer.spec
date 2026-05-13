@@ -35,7 +35,7 @@ android.permissions = READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, INTERNET, A
 # Android 9+ 默认禁止 HTTP 明文流量，必须显式允许；Android 10 需要 legacyExternalStorage 才能访问 /sdcard/
 android.manifest_application_fields = android:usesCleartextTraffic="true" android:requestLegacyExternalStorage="true"
 android.add_src = src
-android.extra_manifest_application_arguments = <receiver android:name=".BootReceiver" android:exported="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/><category android:name="android.intent.category.DEFAULT"/></intent-filter></receiver>
+p4a.hook = p4a_hook.py
 
 
 [buildozer]
