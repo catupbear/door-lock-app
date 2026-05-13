@@ -821,10 +821,15 @@ def _set_immersive(enable: bool):
     """切换沉浸式全屏（隐藏状态栏+导航栏）。Android 11 以下用 FLAG 方式，12+ 仍兼容。"""
     try:
         from jnius import autoclass
-        View = autoclass('android.view.View')
-        activity = autoclass('org.kivy.android.PythonActivity').mActivity
-        dv = activity.getWindow().getDecorView()
+        View          = autoclass('android.view.View')
+        WindowManager = autoclass('android.view.WindowManager$LayoutParams')
+        activity      = autoclass('org.kivy.android.PythonActivity').mActivity
+        window        = activity.getWindow()
+        dv            = window.getDecorView()
         if enable:
+            # Window 级全屏标志（防止状态栏下拉）
+            window.addFlags(WindowManager.FLAG_FULLSCREEN)
+            window.addFlags(WindowManager.FLAG_LAYOUT_NO_LIMITS)
             flags = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
                      View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
                      View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
@@ -832,10 +837,17 @@ def _set_immersive(enable: bool):
                      View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
                      View.SYSTEM_UI_FLAG_FULLSCREEN)
         else:
+            window.clearFlags(WindowManager.FLAG_FULLSCREEN)
+            window.clearFlags(WindowManager.FLAG_LAYOUT_NO_LIMITS)
             flags = View.SYSTEM_UI_FLAG_VISIBLE
         dv.setSystemUiVisibility(flags)
     except Exception:
         pass
+
+
+def _enforce_immersive(dt):
+    """定期强制重新隐藏系统栏，防止手势滑出后停留。"""
+    _set_immersive(True)
 
 
 def _system_reboot():
@@ -1092,13 +1104,14 @@ class PosterScreen(Screen):
         _set_immersive(True)
         self.lbl_did.text = cfg('device_id', '--')
         self._reload()
-        self._auto_ev = Clock.schedule_interval(self._advance, cfg('poster_interval', 5))
-        self._net_ev = Clock.schedule_interval(self._net_check, 15)
+        self._auto_ev   = Clock.schedule_interval(self._advance, cfg('poster_interval', 5))
+        self._net_ev    = Clock.schedule_interval(self._net_check, 15)
+        self._imm_ev    = Clock.schedule_interval(_enforce_immersive, 2)
         self._net_check(0)
         poster_mgr.refresh()
 
     def on_leave(self):
-        for ev in ('_auto_ev', '_net_ev'):
+        for ev in ('_auto_ev', '_net_ev', '_imm_ev'):
             if hasattr(self, ev):
                 getattr(self, ev).cancel()
 
@@ -1238,6 +1251,7 @@ class PasswordScreen(Screen):
         self.add_widget(root)
 
     def on_enter(self):
+        _set_immersive(True)
         self._pwd = ''
         self._update_disp()
         self.lbl_err.text = ''
@@ -1367,6 +1381,7 @@ class ResultScreen(Screen):
         self._p = {'lock': lock, 'ok': ok, 'msg': msg, 'atype': atype}
 
     def on_enter(self):
+        _set_immersive(True)
         lock = self._p.get('lock', 0)
         ok   = self._p.get('ok', False)
         msg  = self._p.get('msg', '')
