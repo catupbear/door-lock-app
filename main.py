@@ -634,10 +634,11 @@ class PosterManager:
         with self._rlock:
             now = time.strftime('%H:%M')
             active = [i['path'] for i in self._items
-                      if i.get('start', '00:00') <= now <= i.get('end', '23:59')]
-            result = active if active else [i['path'] for i in self._items]
+                      if i.get('start', '00:00') <= now <= i.get('end', '23:59')
+                      and os.path.exists(i['path'])]
+            all_valid = [i['path'] for i in self._items if os.path.exists(i['path'])]
+            result = active if active else all_valid
             if not result:
-                # 无网络/无缓存时使用内置离线图片
                 fallback = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                         'assets', 'offline_poster.png')
                 if os.path.exists(fallback):
@@ -654,6 +655,8 @@ class PosterManager:
         data = resp.get('data', {})
         cfg_set('poster_interval', data.get('interval', 5))
         server_items = data.get('list', [])
+        if not server_items:
+            return  # 服务器返回空列表时不清缓存，保留本地已有图片
         known_ids = {item.get('id') for item in server_items}
         new_items = []
         for item in server_items:
@@ -1183,7 +1186,7 @@ class PosterScreen(Screen):
 
 # ─── 密码输入页 ───────────────────────────────────────────────────────────────
 class PasswordScreen(Screen):
-    _MAX = 8
+    _MAX = 6
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -1194,6 +1197,7 @@ class PasswordScreen(Screen):
         root = FloatLayout()
         _dark_bg(root, 0.10, 0.10, 0.13)
 
+        # 返回按钮（左上角）
         btn_back = Button(
             text='← 返回', font_size=dp(16),
             size_hint=(None, None), size=(dp(110), dp(42)),
@@ -1203,32 +1207,34 @@ class PasswordScreen(Screen):
         btn_back.bind(on_press=lambda _: App.get_running_app().go_poster())
         root.add_widget(btn_back)
 
+        # ── 左半屏：标题 + 密码显示 + 错误提示 ───────────────────────────
         root.add_widget(Label(
-            text='请输入开柜密码', font_size=dp(24), bold=True,
-            pos_hint={'center_x': 0.5, 'top': 0.88},
-            size_hint=(None, None), size=(dp(500), dp(50)), halign='center',
+            text='请输入开柜密码', font_size=dp(34), bold=True,
+            pos_hint={'center_x': 0.25, 'center_y': 0.65},
+            size_hint=(None, None), size=(dp(420), dp(60)), halign='center',
         ))
 
         self.lbl_pwd = Label(
-            text='_ _ _ _ _ _', font_size=dp(38), bold=True,
-            pos_hint={'center_x': 0.5, 'top': 0.74},
-            size_hint=(None, None), size=(dp(500), dp(58)), halign='center',
+            text='_ _ _ _ _ _', font_size=dp(54), bold=True,
+            pos_hint={'center_x': 0.25, 'center_y': 0.47},
+            size_hint=(None, None), size=(dp(420), dp(80)), halign='center',
             color=(0.95, 0.95, 0.95, 1),
         )
         root.add_widget(self.lbl_pwd)
 
         self.lbl_err = Label(
-            text='', font_size=dp(15),
-            pos_hint={'center_x': 0.5, 'top': 0.63},
-            size_hint=(None, None), size=(dp(500), dp(35)), halign='center',
+            text='', font_size=dp(18),
+            pos_hint={'center_x': 0.25, 'center_y': 0.32},
+            size_hint=(None, None), size=(dp(420), dp(42)), halign='center',
             color=(0.95, 0.33, 0.33, 1),
         )
         root.add_widget(self.lbl_err)
 
+        # ── 右半屏：放大后的数字键盘 ──────────────────────────────────────
         pad = GridLayout(
-            cols=3, spacing=dp(10),
-            size_hint=(None, None), size=(dp(320), dp(270)),
-            pos_hint={'center_x': 0.5, 'y': 0.03},
+            cols=3, spacing=dp(14),
+            size_hint=(None, None), size=(dp(462), dp(428)),
+            pos_hint={'center_x': 0.75, 'center_y': 0.50},
         )
         for key in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '删', '0', '确认']:
             c = (
@@ -1236,7 +1242,7 @@ class PasswordScreen(Screen):
                 (0.18, 0.62, 0.28, 1) if key == '确认' else
                 (0.22, 0.22, 0.28, 1)
             )
-            b = Button(text=key, font_size=dp(26), background_normal='', background_color=c)
+            b = Button(text=key, font_size=dp(40), background_normal='', background_color=c)
             b.bind(on_press=lambda btn, k=key: self._key(k))
             pad.add_widget(b)
         root.add_widget(pad)
@@ -1257,11 +1263,15 @@ class PasswordScreen(Screen):
         self.lbl_err.text = ''
         self._remaining = cfg('idle_timeout', 60)
         self._idle_ev = Clock.schedule_interval(self._idle_tick, 1)
+        self._imm_ev  = Clock.schedule_interval(lambda dt: _set_immersive(True), 2)
 
     def on_leave(self):
         if hasattr(self, '_idle_ev') and self._idle_ev:
             self._idle_ev.cancel()
             self._idle_ev = None
+        if hasattr(self, '_imm_ev') and self._imm_ev:
+            self._imm_ev.cancel()
+            self._imm_ev = None
 
     def _idle_tick(self, dt):
         self._remaining -= 1
@@ -1279,6 +1289,8 @@ class PasswordScreen(Screen):
         elif len(self._pwd) < self._MAX:
             self._pwd += k
             self._update_disp()
+            if len(self._pwd) == self._MAX:
+                self._submit()
 
     def _update_disp(self):
         n = len(self._pwd)

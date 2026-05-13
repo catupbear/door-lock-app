@@ -7,7 +7,7 @@ source.include_exts = py,ttf,ttc,otf
 source.include_patterns = chinese_font.ttf, assets/offline_poster.png
 icon.filename = icon.png
 presplash.filename = presplash.png
-presplash.color = #ffffff
+presplash.color = #FF4500
 version = 1.0
 requirements = python3==3.11.11,hostpython3==3.11.11,kivy==2.3.0,pyserial,requests
 
