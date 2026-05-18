@@ -1469,21 +1469,28 @@ class AdminAuthScreen(Screen):
             color=(0.9, 0.3, 0.3, 1),
         )
         root.add_widget(self.lbl_err)
-        pad = GridLayout(
-            cols=3, spacing=dp(8),
-            size_hint=(None, None), size=(dp(290), dp(240)),
+        kb = BoxLayout(
+            orientation='vertical', spacing=dp(5),
+            size_hint=(None, None), size=(dp(500), dp(300)),
             pos_hint={'center_x': 0.5, 'y': 0.04},
         )
-        for key in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '删', '0', '确认']:
-            c = (
-                (0.75, 0.20, 0.20, 1) if key == '删' else
-                (0.18, 0.52, 0.22, 1) if key == '确认' else
-                (0.22, 0.22, 0.28, 1)
-            )
-            b = Button(text=key, font_size=dp(22), background_normal='', background_color=c)
-            b.bind(on_press=lambda btn, k=key: self._key(k))
-            pad.add_widget(b)
-        root.add_widget(pad)
+
+        def _make_row(keys, h=dp(52)):
+            row = BoxLayout(spacing=dp(4), size_hint_y=None, height=h)
+            for k in keys:
+                c = (0.75, 0.20, 0.20, 1) if k == '删' else                     (0.18, 0.52, 0.22, 1) if k == '确认' else                     (0.22, 0.22, 0.28, 1)
+                b = Button(text=k, font_size=dp(16), bold=True,
+                           background_normal='', background_color=c, color=(1, 1, 1, 1))
+                b.bind(on_press=lambda btn, key=k: self._key(key))
+                row.add_widget(b)
+            return row
+
+        kb.add_widget(_make_row(list('QWERTYUIOP')))
+        kb.add_widget(_make_row(list('ASDFGHJKL')))
+        kb.add_widget(_make_row(list('ZXCVBNM')))
+        kb.add_widget(_make_row(list('1234567890')))
+        kb.add_widget(_make_row(['删', '确认'], h=dp(58)))
+        root.add_widget(kb)
         self.add_widget(root)
 
     def on_enter(self):
@@ -1499,13 +1506,13 @@ class AdminAuthScreen(Screen):
         if k == '删':
             self._pwd = self._pwd[:-1]
         elif k == '确认':
-            if self._pwd == cfg('admin_password', '888888'):
+            if self._pwd == cfg('admin_password', 'wuhu66'):
                 App.get_running_app().sm.current = 'admin'
             else:
                 self.lbl_err.text = '密码错误'
                 self._pwd = ''
         elif len(self._pwd) < 6:
-            self._pwd += k
+            self._pwd += k.lower()
         self._disp()
 
 
