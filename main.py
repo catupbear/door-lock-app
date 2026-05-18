@@ -621,9 +621,10 @@ def verify_offline_password(password: str, lock_no: int, window_size: int = 1800
 
 # ─── 海报管理器（支持定时投放） ───────────────────────────────────────────────
 class PosterManager:
-    def __init__(self, cache_dir: str, api_client: ApiClient):
+    def __init__(self, cache_dir: str, api_client: ApiClient, offline_poster: str = ''):
         self._dir = cache_dir
         self._api = api_client
+        self._offline_poster = offline_poster
         self._items: list = []   # [{'path': str, 'start': 'HH:MM', 'end': 'HH:MM'}]
         self._rlock = threading.Lock()
         os.makedirs(cache_dir, exist_ok=True)
@@ -639,10 +640,8 @@ class PosterManager:
             all_valid = [i['path'] for i in self._items if os.path.exists(i['path'])]
             result = active if active else all_valid
             if not result:
-                fallback = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                        'assets', 'offline_poster.png')
-                if os.path.exists(fallback):
-                    return [fallback]
+                if self._offline_poster and os.path.exists(self._offline_poster):
+                    return [self._offline_poster]
             return result
 
     def refresh(self):
@@ -2065,7 +2064,29 @@ class DoorLockApp(App):
             os.path.join(self.user_data_dir, 'reboot_log.jsonl'),
         )
         cfg_mgr = RemoteConfigManager()
-        poster_mgr = PosterManager(os.path.join(self.user_data_dir, 'posters'), api)
+
+        # 将 APK 内置离线海报复制到可写目录，热更新脚本也可从该路径读取
+        _offline_dst = os.path.join(_data_dir, 'assets', 'offline_poster.png')
+        if not os.path.exists(_offline_dst):
+            _offline_src = ''
+            try:
+                from kivy.resources import resource_find as _rf
+                _offline_src = _rf('assets/offline_poster.png') or ''
+            except Exception:
+                pass
+            if not _offline_src:
+                _offline_src = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            'assets', 'offline_poster.png')
+            if os.path.exists(_offline_src):
+                try:
+                    os.makedirs(os.path.dirname(_offline_dst), exist_ok=True)
+                    import shutil as _sh
+                    _sh.copy2(_offline_src, _offline_dst)
+                except Exception:
+                    pass
+
+        poster_mgr = PosterManager(os.path.join(self.user_data_dir, 'posters'), api,
+                                   _offline_dst if os.path.exists(_offline_dst) else '')
 
         self.sm = ScreenManager(transition=NoTransition())
         for name, cls in [
