@@ -654,8 +654,6 @@ class PosterManager:
         data = resp.get('data', {})
         cfg_set('poster_interval', data.get('interval', 5))
         server_items = data.get('list', [])
-        if not server_items:
-            return  # 服务器返回空列表时不清缓存，保留本地已有图片
         known_ids = {item.get('id') for item in server_items}
         new_items = []
         for item in server_items:
@@ -689,10 +687,9 @@ class PosterManager:
                     os.remove(os.path.join(self._dir, fname))
                 except Exception:
                     pass
-        if new_items:
-            with self._rlock:
-                self._items = new_items
-            Clock.schedule_once(lambda _: self._notify_poster_screen())
+        with self._rlock:
+            self._items = new_items
+        Clock.schedule_once(lambda _: self._notify_poster_screen())
 
     def _notify_poster_screen(self):
         try:
