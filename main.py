@@ -649,7 +649,15 @@ class PosterManager:
                 candidates = []
                 if self._offline_poster:
                     candidates.append(self._offline_poster)
-                # APK 内置资产解压后的标准路径
+                # Kivy resource_find 是最可靠的方式，它知道 APK 解压后的真实路径
+                try:
+                    from kivy.resources import resource_find as _rf
+                    _p = _rf('assets/offline_poster.png')
+                    if _p:
+                        candidates.insert(0, _p)
+                except Exception:
+                    pass
+                # 常见 Android APK 解压路径兜底
                 candidates += [
                     '/data/data/org.doorlock.doorlock/files/app/assets/offline_poster.png',
                     '/data/data/org.doorlock.doorlock/files/assets/offline_poster.png',
