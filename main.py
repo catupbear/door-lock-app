@@ -645,27 +645,8 @@ class PosterManager:
                       and os.path.exists(i['path'])]
             all_valid = [i['path'] for i in self._items if os.path.exists(i['path'])]
             result = active if active else all_valid
-            if not result:
-                candidates = []
-                if self._offline_poster:
-                    candidates.append(self._offline_poster)
-                # Kivy resource_find 是最可靠的方式，它知道 APK 解压后的真实路径
-                try:
-                    from kivy.resources import resource_find as _rf
-                    _p = _rf('assets/offline_poster.png')
-                    if _p:
-                        candidates.insert(0, _p)
-                except Exception:
-                    pass
-                # 常见 Android APK 解压路径兜底
-                candidates += [
-                    '/data/data/org.doorlock.doorlock/files/app/assets/offline_poster.png',
-                    '/data/data/org.doorlock.doorlock/files/assets/offline_poster.png',
-                    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'offline_poster.png'),
-                ]
-                for p in candidates:
-                    if p and os.path.exists(p):
-                        return [p]
+            if not result and self._offline_poster and os.path.exists(self._offline_poster):
+                return [self._offline_poster]
             return result
 
     def refresh(self):
@@ -2139,28 +2120,26 @@ class DoorLockApp(App):
         )
         cfg_mgr = RemoteConfigManager()
 
-        # 将 APK 内置离线海报复制到可写目录，热更新脚本也可从该路径读取
-        _offline_dst = os.path.join(_data_dir, 'assets', 'offline_poster.png')
-        if not os.path.exists(_offline_dst):
-            _offline_src = ''
-            try:
-                from kivy.resources import resource_find as _rf
-                _offline_src = _rf('assets/offline_poster.png') or ''
-            except Exception:
-                pass
-            if not _offline_src:
-                _offline_src = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                            'assets', 'offline_poster.png')
-            if os.path.exists(_offline_src):
-                try:
-                    os.makedirs(os.path.dirname(_offline_dst), exist_ok=True)
-                    import shutil as _sh
-                    _sh.copy2(_offline_src, _offline_dst)
-                except Exception as _ce:
-                    _loader_log(f'offline_poster 复制失败: {_ce}')
+        # 找 APK 内置离线海报路径，resource_find 由 Kivy 解析最可靠
+        _offline_poster = ''
+        try:
+            from kivy.resources import resource_find as _rf
+            _offline_poster = _rf('assets/offline_poster.png') or ''
+        except Exception:
+            pass
+        if not _offline_poster or not os.path.exists(_offline_poster):
+            # 兜底：APK 解压后的标准路径
+            for _p in [
+                os.path.join(_data_dir, 'app', 'assets', 'offline_poster.png'),
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'offline_poster.png'),
+            ]:
+                if os.path.exists(_p):
+                    _offline_poster = _p
+                    break
+        _loader_log(f'offline_poster: {_offline_poster} exists={os.path.exists(_offline_poster) if _offline_poster else False}')
 
         poster_mgr = PosterManager(os.path.join(self.user_data_dir, 'posters'), api,
-                                   _offline_dst if os.path.exists(_offline_dst) else '')
+                                   _offline_poster)
 
         self.sm = ScreenManager(transition=NoTransition())
         for name, cls in [
