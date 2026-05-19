@@ -646,8 +646,18 @@ class PosterManager:
             all_valid = [i['path'] for i in self._items if os.path.exists(i['path'])]
             result = active if active else all_valid
             if not result:
-                if self._offline_poster and os.path.exists(self._offline_poster):
-                    return [self._offline_poster]
+                candidates = []
+                if self._offline_poster:
+                    candidates.append(self._offline_poster)
+                # APK 内置资产解压后的标准路径
+                candidates += [
+                    '/data/data/org.doorlock.doorlock/files/app/assets/offline_poster.png',
+                    '/data/data/org.doorlock.doorlock/files/assets/offline_poster.png',
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'offline_poster.png'),
+                ]
+                for p in candidates:
+                    if p and os.path.exists(p):
+                        return [p]
             return result
 
     def refresh(self):
@@ -2138,8 +2148,8 @@ class DoorLockApp(App):
                     os.makedirs(os.path.dirname(_offline_dst), exist_ok=True)
                     import shutil as _sh
                     _sh.copy2(_offline_src, _offline_dst)
-                except Exception:
-                    pass
+                except Exception as _ce:
+                    _loader_log(f'offline_poster 复制失败: {_ce}')
 
         poster_mgr = PosterManager(os.path.join(self.user_data_dir, 'posters'), api,
                                    _offline_dst if os.path.exists(_offline_dst) else '')
