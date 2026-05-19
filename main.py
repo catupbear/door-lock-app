@@ -91,6 +91,7 @@ import shutil
 import sys
 import threading
 import time
+import uuid
 
 _BACKUP_SCRIPT = _INTERNAL + '.bak'
 
@@ -157,6 +158,10 @@ def _cfg_load(data_dir: str):
                 _CFG = json.load(f)
         except Exception:
             _CFG = {}
+    # 每台设备首次启动时生成唯一本地 ID，持久保存，保证不同设备不冲突
+    if not _CFG.get('local_device_id'):
+        _CFG['local_device_id'] = 'DL' + uuid.uuid4().hex[:8].upper()
+        _cfg_save()
 
 
 def _cfg_save():
@@ -297,6 +302,7 @@ class ApiClient:
         return self._post('/api/device/init', {
             'mac_address': mac, 'android_id': android_id,
             'model': 'RK3288', 'os_version': 'Android 10', 'app_version': '3.0.0',
+            'proposed_device_id': cfg('local_device_id', ''),
         })
 
     def heartbeat(self, network_type='wifi'):
