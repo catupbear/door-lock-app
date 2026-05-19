@@ -1291,7 +1291,7 @@ class PasswordScreen(Screen):
         self._pwd = ''
         self._update_disp()
         self.lbl_err.text = ''
-        self._remaining = cfg('idle_timeout', 60)
+        self._remaining = cfg('idle_timeout', 30)
         self._idle_ev = Clock.schedule_interval(self._idle_tick, 1)
         self._imm_ev  = Clock.schedule_interval(lambda dt: _set_immersive(True), 2)
 
@@ -1310,7 +1310,7 @@ class PasswordScreen(Screen):
             App.get_running_app().go_poster()
 
     def _key(self, k: str):
-        self._remaining = cfg('idle_timeout', 60)
+        self._remaining = cfg('idle_timeout', 30)
         if k == '删':
             self._pwd = self._pwd[:-1]
             self._update_disp()
@@ -1701,6 +1701,21 @@ class AdminScreen(Screen):
 
         root.add_widget(sys_row)
 
+        # ── 超时设置 ──────────────────────────────────────────────────────────
+        to_row = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(6))
+        to_row.add_widget(Label(text='离开前台:', size_hint_x=0.16, font_size=dp(13)))
+        self.spn_idle = Spinner(
+            text=str(cfg('idle_timeout', 30)),
+            values=['1', '10', '20', '30'],
+            font_size=dp(13), size_hint_x=0.14,
+        )
+        self.spn_idle.bind(text=lambda sp, v: cfg_set('idle_timeout', int(v)))
+        to_row.add_widget(self.spn_idle)
+        to_row.add_widget(Label(text='秒后返回海报页', size_hint_x=0.30, font_size=dp(13),
+                                halign='left', color=(0.65, 0.65, 0.65, 1)))
+        to_row.add_widget(Label(size_hint_x=0.40))
+        root.add_widget(to_row)
+
         # ── 锁测试（6路）────────────────────────────────────────────────────
         lock_row = BoxLayout(
             size_hint_y=None, height=dp(72), spacing=dp(8),
@@ -1748,6 +1763,8 @@ class AdminScreen(Screen):
         self.inp_addr.text = str(cfg('board_addr', 1))
         self.inp_api.text  = cfg('api_base', 'http://keyapi.wuhuxiche.com')
         self.inp_did.text  = cfg('device_id', '')
+        _idle = cfg('idle_timeout', 30)
+        self.spn_idle.text = str(_idle) if str(_idle) in ['1', '10', '20', '30'] else '30'
         _hu = globals().get('_HOTUPDATE_VERSION')
         self.lbl_log.text = f'v{LocalLogger.APP_VERSION}  热更新: {_hu or "内置代码"}'
         if ctrl.connected:
