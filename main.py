@@ -2074,6 +2074,11 @@ class BackgroundServices:
         lock   = int(data.get('lock', 0))
         atype  = int(data.get('type', 1))
         logger.info(f'[远程指令] 锁{lock} type={atype}')
+        if atype == 10:
+            logger.info('[远程指令] 收到重启指令，准备重启应用')
+            api.ack_command(cmd_id, True, '')
+            Clock.schedule_once(lambda _: App.get_running_app().restart_app(), 1)
+            return
         if not ctrl.connected:
             api.ack_command(cmd_id, False, '串口未连接')
             return
