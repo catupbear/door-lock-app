@@ -1100,6 +1100,15 @@ class PosterScreen(Screen):
             halign='center', color=(0.8, 0.8, 0.8, 1),
         )
         root.add_widget(self.lbl_dots)
+
+        self.lbl_uninit = Label(
+            text='设备未初始化，请联系工作人员',
+            font_size=dp(14), opacity=0,
+            pos_hint={'right': 0.99, 'y': 0.04},
+            size_hint=(None, None), size=(dp(320), dp(28)),
+            halign='right', color=(1, 0.55, 0.1, 1),
+        )
+        root.add_widget(self.lbl_uninit)
         self.add_widget(root)
 
     def on_enter(self):
@@ -1109,17 +1118,39 @@ class PosterScreen(Screen):
         self._auto_ev   = Clock.schedule_interval(self._advance, cfg('poster_interval', 5))
         self._net_ev    = Clock.schedule_interval(self._net_check, 15)
         self._imm_ev    = Clock.schedule_interval(_enforce_immersive, 2)
+        self._init_ev   = Clock.schedule_interval(self._init_check, 30)
         self._net_check(0)
+        self._init_check(0)
         poster_mgr.refresh()
 
     def on_leave(self):
-        for ev in ('_auto_ev', '_net_ev', '_imm_ev'):
+        for ev in ('_auto_ev', '_net_ev', '_imm_ev', '_init_ev'):
             if hasattr(self, ev):
                 getattr(self, ev).cancel()
+
+    def _init_check(self, dt):
+        if not cfg('device_id'):
+            threading.Thread(target=self._do_init_bg, daemon=True).start()
+
+    def _do_init_bg(self):
+        mac = _get_device_mac()
+        android_id = _get_android_id()
+        resp = api.init_device(mac, android_id)
+        if resp and resp.get('code') == 0:
+            d = resp['data']
+            cfg_set('device_id', d['device_id'])
+            cfg_set('device_secret', d.get('device_secret', ''))
+            logger.info(f'设备初始化成功: {d["device_id"]}')
+            def _on_init(_):
+                self.lbl_did.text = cfg('device_id', '--')
+                self.lbl_uninit.opacity = 0
+                poster_mgr.refresh()
+            Clock.schedule_once(_on_init)
 
     def _reload(self):
         p = poster_mgr.posters
         self.lbl_empty.opacity = 0 if p else 1
+        self.lbl_uninit.opacity = 0 if cfg('device_id') else 1
         if p:
             self._idx = self._idx % len(p)
             self.img.source = p[self._idx]
@@ -2101,7 +2132,7 @@ class DoorLockApp(App):
         ]:
             self.sm.add_widget(cls(name=name))
 
-        self.sm.current = 'poster' if cfg('device_id') else 'init'
+        self.sm.current = 'poster'
 
         self._svc = BackgroundServices()
         self._svc.start()
