@@ -631,10 +631,13 @@ class PosterManager:
         self._dir = cache_dir
         self._api = api_client
         self._offline_poster = offline_poster
-        self._items: list = []   # [{'path': str, 'start': 'HH:MM', 'end': 'HH:MM'}]
+        self._items: list = []
         self._rlock = threading.Lock()
         os.makedirs(cache_dir, exist_ok=True)
         self._load_cached()
+        _loader_log(f'[PosterManager] 初始化 cache={cache_dir} offline={offline_poster} '
+                    f'offline_exists={os.path.exists(offline_poster) if offline_poster else False} '
+                    f'cached={len(self._items)}张')
 
     @property
     def posters(self) -> list:
@@ -645,20 +648,30 @@ class PosterManager:
                       and os.path.exists(i['path'])]
             all_valid = [i['path'] for i in self._items if os.path.exists(i['path'])]
             result = active if active else all_valid
-            if not result and self._offline_poster and os.path.exists(self._offline_poster):
-                return [self._offline_poster]
+            if not result:
+                if self._offline_poster and os.path.exists(self._offline_poster):
+                    return [self._offline_poster]
+                if logger:
+                    logger.info(f'[海报] 无可用海报，offline_poster={self._offline_poster!r}，'
+                                f'exists={os.path.exists(self._offline_poster) if self._offline_poster else False}')
             return result
 
     def refresh(self):
         threading.Thread(target=self._fetch, daemon=True).start()
 
     def _fetch(self):
+        if logger:
+            logger.info('[海报] 开始从服务器拉取海报列表')
         resp = self._api.get_posters()
         if not resp or resp.get('code') != 0:
+            if logger:
+                logger.info(f'[海报] 拉取失败 resp={resp}')
             return
         data = resp.get('data', {})
         cfg_set('poster_interval', data.get('interval', 5))
         server_items = data.get('list', [])
+        if logger:
+            logger.info(f'[海报] 服务器返回 {len(server_items)} 张')
         known_ids = {item.get('id') for item in server_items}
         new_items = []
         for item in server_items:
