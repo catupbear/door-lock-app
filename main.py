@@ -1095,10 +1095,11 @@ class PosterScreen(Screen):
 
         self.lbl_did = Label(
             text='', font_size=dp(13),
-            pos_hint={'right': 0.99, 'y': 0.01},
-            size_hint=(None, None), size=(dp(200), dp(28)),
+            pos_hint={'right': 1.0, 'y': 0},
+            size_hint=(None, None), size=(dp(200), dp(24)),
             halign='right', color=(0.6, 0.6, 0.6, 1),
         )
+        self.lbl_did.bind(size=self.lbl_did.setter('text_size'))
         root.add_widget(self.lbl_did)
 
         self.lbl_net = Label(
@@ -1488,7 +1489,7 @@ class AdminAuthScreen(Screen):
         super().__init__(**kw)
         self._pwd = ''
         root = FloatLayout()
-        _dark_bg(root, 1.0, 0.40, 0.0)
+        _dark_bg(root, 0, 0, 0)
         btn_back = Button(
             text='← 取消', font_size=dp(15),
             size_hint=(None, None), size=(dp(100), dp(40)),
@@ -1568,7 +1569,7 @@ class AdminScreen(Screen):
         super().__init__(**kw)
         self._immersive = False
         root = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(5))
-        _dark_bg(root, 1.0, 0.40, 0.0)
+        _dark_bg(root, 0, 0, 0)
 
         # ── 顶部工具栏 ────────────────────────────────────────────────────────
         top = BoxLayout(size_hint_y=None, height=dp(46), spacing=dp(8))
@@ -1911,7 +1912,7 @@ class AdminRebootScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
         root = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(8))
-        _dark_bg(root, 1.0, 0.40, 0.0)
+        _dark_bg(root, 0, 0, 0)
 
         top = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
         btn_back = Button(
@@ -2002,7 +2003,7 @@ class AdminLogScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
         root = BoxLayout(orientation='vertical', padding=dp(10), spacing=dp(8))
-        _dark_bg(root, 1.0, 0.40, 0.0)
+        _dark_bg(root, 0, 0, 0)
 
         top = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
         btn_back = Button(
