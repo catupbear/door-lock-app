@@ -1308,7 +1308,7 @@ class PasswordScreen(Screen):
         self._pwd = ''
         self._update_disp()
         self.lbl_err.text = ''
-        self._remaining = cfg('idle_timeout', 30)
+        self._remaining = cfg('idle_timeout', 5)
         self._idle_ev = Clock.schedule_interval(self._idle_tick, 1)
         self._imm_ev  = Clock.schedule_interval(lambda dt: _set_immersive(True), 2)
 
@@ -1327,7 +1327,7 @@ class PasswordScreen(Screen):
             App.get_running_app().go_poster()
 
     def _key(self, k: str):
-        self._remaining = cfg('idle_timeout', 30)
+        self._remaining = cfg('idle_timeout', 5)
         if k == '删':
             self._pwd = self._pwd[:-1]
             self._update_disp()
@@ -1722,8 +1722,8 @@ class AdminScreen(Screen):
         to_row = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(6))
         to_row.add_widget(Label(text='离开前台:', size_hint_x=0.16, font_size=dp(13)))
         self.spn_idle = Spinner(
-            text=str(cfg('idle_timeout', 30)),
-            values=['1', '10', '20', '30'],
+            text=str(cfg('idle_timeout', 5)),
+            values=['5', '60'],
             font_size=dp(13), size_hint_x=0.14,
         )
         self.spn_idle.bind(text=lambda sp, v: cfg_set('idle_timeout', int(v)))
@@ -1780,8 +1780,8 @@ class AdminScreen(Screen):
         self.inp_addr.text = str(cfg('board_addr', 1))
         self.inp_api.text  = cfg('api_base', 'http://keyapi.wuhuxiche.com')
         self.inp_did.text  = cfg('device_id', '')
-        _idle = cfg('idle_timeout', 30)
-        self.spn_idle.text = str(_idle) if str(_idle) in ['1', '10', '20', '30'] else '30'
+        _idle = cfg('idle_timeout', 5)
+        self.spn_idle.text = str(_idle) if str(_idle) in ['5', '60'] else '5'
         _hu = globals().get('_HOTUPDATE_VERSION')
         self.lbl_log.text = f'v{LocalLogger.APP_VERSION}  热更新: {_hu or "内置代码"}'
         if ctrl.connected:
