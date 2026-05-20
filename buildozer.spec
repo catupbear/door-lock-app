@@ -17,9 +17,6 @@ fullscreen = 1
 android.api = 31
 android.minapi = 21
 android.ndk = 25b
-android.ndk_path = /Users/a111/.buildozer/android/platform/android-ndk-r25b
-android.sdk_path = /Users/a111/.buildozer/android/platform/android-sdk
-android.build_tools_version = 33.0.0
 android.archs = armeabi-v7a
 
 # 设为系统桌面（Launcher），开机自启并作为默认 Home 应用
