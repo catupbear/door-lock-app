@@ -566,7 +566,7 @@ class RemoteConfigManager:
         _save_path = os.path.join(_save_dir, 'door_lock_main.py')
         _bak_path  = _save_path + '.bak'
 
-        current = globals().get('_HOTUPDATE_VERSION') or LocalLogger.APP_VERSION
+        current = globals().get('_HOTUPDATE_VERSION') or cfg('hot_update_version') or LocalLogger.APP_VERSION
         resp = api.check_update(current)
         if not resp or resp.get('code') != 0:
             _cb('检查失败：无法连接服务器')
@@ -601,6 +601,8 @@ class RemoteConfigManager:
                     pass
             with open(_save_path, 'wb') as f:
                 f.write(content)
+            cfg_set('hot_update_version', version)
+            _cfg_save()
             logger.info(f'远程包已下载 v{version}，重启后生效')
             _cb(f'已下载 v{version}，正在重启...')
             Clock.schedule_once(lambda _: App.get_running_app().restart_app(), 2)
