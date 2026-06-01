@@ -29,8 +29,10 @@ def generate_hotupdate(version: str) -> bytes:
 # ─── 热更新版本 {version} ──────────────────────────────────────────────────
 import os as _os, shutil as _shutil
 
-_INTERNAL  = _os.path.join(_os.path.expanduser('~'), 'door_lock_main.py')
-_LOG_PATH  = _os.path.join(_os.path.expanduser('~'), 'door_lock_loader.log')
+_APP_DATA_DIR = '/data/data/org.doorlock.doorlock/files'
+_BASE_DIR     = _APP_DATA_DIR if _os.path.isdir(_APP_DATA_DIR) else _os.path.expanduser('~')
+_INTERNAL  = _os.path.join(_BASE_DIR, 'door_lock_main.py')
+_LOG_PATH  = _os.path.join(_BASE_DIR, 'door_lock_loader.log')
 _loader_messages = []
 _HOTUPDATE_VERSION = "{version}"
 '''
