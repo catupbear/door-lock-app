@@ -2054,6 +2054,16 @@ class BackgroundServices:
         threading.Thread(target=self._heartbeat_loop, daemon=True).start()
         threading.Thread(target=self._cmd_loop, daemon=True).start()
         threading.Thread(target=self._log_upload_loop, daemon=True).start()
+        threading.Thread(target=self._serial_watchdog, daemon=True).start()
+
+    def _serial_watchdog(self):
+        time.sleep(2)
+        while self._running:
+            if not ctrl.connected and SERIAL_AVAILABLE:
+                ok, msg = ctrl.connect(cfg('port', '/dev/ttyS1'), cfg('baudrate', 9600))
+                if logger:
+                    logger.info(f'串口自动重连: {msg}')
+            time.sleep(10)
 
     def stop(self):
         self._running = False
@@ -2186,7 +2196,7 @@ class DoorLockApp(App):
 
         logger.info(f'App启动 v{LocalLogger.APP_VERSION} 设备ID={cfg("device_id","未初始化")}')
 
-        if cfg('port') and SERIAL_AVAILABLE:
+        if SERIAL_AVAILABLE:
             threading.Thread(target=self._auto_connect, daemon=True).start()
 
         self._request_storage_permissions()
