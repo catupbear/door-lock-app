@@ -27,7 +27,7 @@ def generate_hotupdate(version: str) -> bytes:
 协议: 老铁 5字节帧协议
 """
 # ─── 热更新版本 {version} ──────────────────────────────────────────────────
-import os as _os, shutil as _shutil
+import os as _os, shutil as _shutil, time as _time
 
 _APP_DATA_DIR = '/data/data/org.doorlock.doorlock/files'
 _BASE_DIR     = _APP_DATA_DIR if _os.path.isdir(_APP_DATA_DIR) else _os.path.expanduser('~')
@@ -35,6 +35,16 @@ _INTERNAL  = _os.path.join(_BASE_DIR, 'door_lock_main.py')
 _LOG_PATH  = _os.path.join(_BASE_DIR, 'door_lock_loader.log')
 _loader_messages = []
 _HOTUPDATE_VERSION = "{version}"
+
+def _loader_log(msg):
+    _ts = _time.strftime('%H:%M:%S')
+    _line = f'[{{_ts}}] {{msg}}'
+    _loader_messages.append(_line)
+    try:
+        with open(_LOG_PATH, 'a', encoding='utf-8') as _f:
+            _f.write(_line + '\\n')
+    except Exception:
+        pass
 '''
     result = (header + content[idx:]).encode('utf-8')
     print(f'生成热更新文件: {len(result.splitlines())} 行，MD5: {hashlib.md5(result).hexdigest()}')

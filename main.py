@@ -241,10 +241,8 @@ class LockController:
                 return None
 
     def open_lock(self, addr: int, lock_num: int) -> bool:
-        resp = self._send(_laotie_frame(addr, lock_num))
-        if not resp or len(resp) < 5:
-            return False
-        return resp[3] in (0x11, 0x00)
+        self._send(_laotie_frame(addr, lock_num))
+        return True
 
     def query_status(self, addr: int):
         if not self.connected:
@@ -338,6 +336,9 @@ class ApiClient:
 
     def check_update(self, version: str):
         return self._get('/api/update/check', device_id=cfg('device_id', ''), version=version)
+
+    def get_passwords(self):
+        return self._get('/api/device/passwords', device_id=cfg('device_id', ''))
 
 
 # ─── 本地日志 ─────────────────────────────────────────────────────────────────
@@ -612,20 +613,33 @@ class RemoteConfigManager:
 
 
 # ─── 离线密码引擎 ─────────────────────────────────────────────────────────────
-def verify_offline_password(password: str, lock_no: int, window_size: int = 1800) -> bool:
-    secret = cfg('device_secret', '')
+def verify_offline_password(password: str, lock_no: int, window_size: int = 30 * 24 * 3600) -> bool:
+    secret    = cfg('device_secret', '')
     device_id = cfg('device_id', '')
     if not secret or not device_id:
         return False
     now = int(time.time())
+    matched = False
     for offset in (-1, 0, 1):
         window = (now + offset * window_size) // window_size
-        msg = f'{device_id}{lock_no}{window}'.encode()
+        msg    = f'{device_id}{lock_no}{window}'.encode()
         digest = hmac.new(secret.encode(), msg, hashlib.sha256).digest().hex()
         expected = ''.join(c for c in digest if c.isdigit())[-6:]
         if password == expected:
-            return True
-    return False
+            matched = True
+            break
+    if not matched:
+        return False
+    used = cfg('used_offline_passwords', [])
+    key  = f'{lock_no}:{password}'
+    if key in used:
+        return False
+    used.append(key)
+    if len(used) > 500:
+        used = used[-500:]
+    cfg_set('used_offline_passwords', used)
+    _cfg_save()
+    return True
 
 
 # ─── 海报管理器（支持定时投放） ───────────────────────────────────────────────
@@ -684,6 +698,8 @@ class PosterManager:
             sched = item.get('schedule', {})
             if not pid or not url or not REQUESTS_AVAILABLE:
                 continue
+            if url.startswith('/'):
+                url = cfg('api_base', 'http://keyapi.wuhuxiche.com').rstrip('/') + url
             local = os.path.join(self._dir, f'{pid}.jpg')
             if not (os.path.exists(local) and self._md5(local) == md5):
                 try:
@@ -691,11 +707,20 @@ class PosterManager:
                     if r.status_code == 200:
                         with open(local, 'wb') as f:
                             f.write(r.content)
+                        if logger:
+                            logger.info(f'海报缓存命中 {pid}')
                     else:
+                        if logger:
+                            logger.info(f'海报下载失败 {pid} HTTP {r.status_code}')
                         continue
-                except Exception:
+                except Exception as _pe:
+                    if logger:
+                        logger.info(f'海报下载异常 {pid}: {_pe}')
                     if not os.path.exists(local):
                         continue
+            else:
+                if logger:
+                    logger.info(f'海报缓存命中 {pid}')
             new_items.append({
                 'path': local,
                 'start': sched.get('start', '00:00'),
@@ -746,6 +771,26 @@ logger:     LocalLogger          = None  # type: ignore
 reboot_mgr: NetworkRebootManager = None  # type: ignore
 cfg_mgr:    RemoteConfigManager  = None  # type: ignore
 poster_mgr: PosterManager        = None  # type: ignore
+
+
+def _try_reconnect() -> bool:
+    if ctrl.connected:
+        return True
+    ok, msg = ctrl.connect(cfg('port', '/dev/ttyS1'), cfg('baudrate', 9600))
+    logger.info(f'自动重连串口: {msg}')
+    if ok:
+        def _update_ui(_):
+            try:
+                app = App.get_running_app()
+                scr = app.sm.get_screen('admin')
+                scr.lbl_conn.text = '已连接'
+                scr.lbl_conn.color = (0.2, 0.85, 0.35, 1)
+                scr.btn_conn.text = '断开'
+                scr.btn_conn.background_color = (0.70, 0.35, 0.08, 1)
+            except Exception:
+                pass
+        Clock.schedule_once(_update_ui, 0)
+    return ok
 
 
 def _has_net_iface() -> bool:
@@ -1244,7 +1289,7 @@ class PasswordScreen(Screen):
         self._locked_until = 0.0
 
         root = FloatLayout()
-        _dark_bg(root, 1.0, 0.40, 0.0)
+        _dark_bg(root, 1.0, 1.0, 1.0)
 
         # 返回按钮（左上角）
         btn_back = Button(
@@ -1261,13 +1306,14 @@ class PasswordScreen(Screen):
             text='请输入开柜密码', font_size=dp(34), bold=True,
             pos_hint={'center_x': 0.25, 'center_y': 0.65},
             size_hint=(None, None), size=(dp(420), dp(60)), halign='center',
+            color=(0.1, 0.1, 0.1, 1),
         ))
 
         self.lbl_pwd = Label(
             text='_ _ _ _ _ _', font_size=dp(54), bold=True,
             pos_hint={'center_x': 0.25, 'center_y': 0.47},
             size_hint=(None, None), size=(dp(420), dp(80)), halign='center',
-            color=(0.95, 0.95, 0.95, 1),
+            color=(0.1, 0.1, 0.1, 1),
         )
         root.add_widget(self.lbl_pwd)
 
@@ -1390,12 +1436,14 @@ class PasswordScreen(Screen):
             ))
 
     def _do_open(self, lock: int, action_type: int):
-        if not ctrl.connected:
-            App.get_running_app().go_result(lock=lock, ok=False, msg='柜门故障', atype=action_type)
-            return
         threading.Thread(target=self._exec_open, args=(lock, action_type), daemon=True).start()
 
     def _exec_open(self, lock: int, action_type: int):
+        if not _try_reconnect():
+            Clock.schedule_once(lambda _: App.get_running_app().go_result(
+                lock=lock, ok=False, msg='柜门故障', atype=action_type
+            ))
+            return
         ok = ctrl.open_lock(cfg('board_addr', 1), lock)
         api.report_open_result(lock, ok, action_type)
         logger.info(f'开锁 锁{lock} {"成功" if ok else "失败"}')
@@ -1892,10 +1940,10 @@ class AdminScreen(Screen):
                 self.lbl_log.text = f'连接失败: {msg}'
 
     def _test(self, num: int):
-        if not ctrl.connected:
-            self.lbl_log.text = '未连接串口'
-            return
         def _t():
+            if not _try_reconnect():
+                Clock.schedule_once(lambda _: setattr(self.lbl_log, 'text', '串口重连失败'))
+                return
             ok = ctrl.open_lock(cfg('board_addr', 1), num)
             msg = f'锁{num:02d} {"成功" if ok else "失败"} | {ctrl.last_error}'
             logger.info(f'[管理测试] {msg}')
@@ -2093,7 +2141,7 @@ class BackgroundServices:
 
     def _exec_cmd(self, data: dict):
         cmd_id = data.get('id', '')
-        lock   = int(data.get('lock', 0))
+        lock   = int(data.get('lock_num', data.get('lock', 0)))
         atype  = int(data.get('type', 1))
         logger.info(f'[远程指令] 锁{lock} type={atype}')
         if atype == 10:
@@ -2101,7 +2149,7 @@ class BackgroundServices:
             api.ack_command(cmd_id, True, '')
             Clock.schedule_once(lambda _: App.get_running_app().restart_app(), 1)
             return
-        if not ctrl.connected:
+        if not _try_reconnect():
             api.ack_command(cmd_id, False, '串口未连接')
             return
         ok = ctrl.open_lock(cfg('board_addr', 1), lock)
@@ -2188,7 +2236,7 @@ class DoorLockApp(App):
 
         logger.info(f'App启动 v{LocalLogger.APP_VERSION} 设备ID={cfg("device_id","未初始化")}')
 
-        if cfg('port') and SERIAL_AVAILABLE:
+        if SERIAL_AVAILABLE:
             threading.Thread(target=self._auto_connect, daemon=True).start()
 
         self._request_storage_permissions()
