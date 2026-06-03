@@ -1312,8 +1312,6 @@ class PasswordScreen(Screen):
     def __init__(self, **kw):
         super().__init__(**kw)
         self._pwd = ''
-        self._errors = 0
-        self._locked_until = 0.0
 
         root = FloatLayout()
         _dark_bg(root, 0.0, 0.0, 0.0)
@@ -1421,10 +1419,6 @@ class PasswordScreen(Screen):
     def _submit(self):
         if not self._pwd:
             return
-        if time.time() < self._locked_until:
-            secs = int(self._locked_until - time.time())
-            self.lbl_err.text = f'已锁定，请{secs}秒后重试'
-            return
         if len(self._pwd) < 6:
             self.lbl_err.text = '密码至少6位'
             return
@@ -1447,20 +1441,8 @@ class PasswordScreen(Screen):
                 logger.info(f'离线验证成功，锁{lock_no}')
                 Clock.schedule_once(lambda _, ln=lock_no: self._do_open(ln, 1))
                 return
-        self._errors += 1
-        max_e = cfg('max_error_count', 5)
-        logger.warn(f'密码错误，已失败{self._errors}次')
-        if self._errors >= max_e:
-            lock_d = cfg('lock_duration', 180)
-            self._locked_until = time.time() + lock_d
-            Clock.schedule_once(lambda _: setattr(
-                self.lbl_err, 'text', f'错误过多，锁定{lock_d // 60}分钟'
-            ))
-        else:
-            left = max_e - self._errors
-            Clock.schedule_once(lambda _: setattr(
-                self.lbl_err, 'text', f'密码错误，还可尝试{left}次'
-            ))
+        logger.warn('密码错误')
+        Clock.schedule_once(lambda _: setattr(self.lbl_err, 'text', '密码错误，请重试'))
 
     def _do_open(self, lock: int, action_type: int):
         threading.Thread(target=self._exec_open, args=(lock, action_type), daemon=True).start()
