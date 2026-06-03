@@ -194,6 +194,16 @@ def _laotie_frame(board: int, lock: int) -> bytes:
     return bytes(frame)
 
 
+# ─── WKLY协议（485锁控板）────────────────────────────────────────────────────
+def _wkly_frame(addr: int, lock_num: int) -> bytes:
+    frame = bytearray([0x57, 0x4B, 0x4C, 0x59, 0x09, addr & 0xFF, 0x82, lock_num & 0xFF])
+    xor = 0
+    for b in frame:
+        xor ^= b
+    frame.append(xor & 0xFF)
+    return bytes(frame)
+
+
 # ─── 串口控制器 ───────────────────────────────────────────────────────────────
 class LockController:
     def __init__(self):
@@ -241,7 +251,11 @@ class LockController:
                 return None
 
     def open_lock(self, addr: int, lock_num: int) -> bool:
-        self._send(_laotie_frame(addr, lock_num))
+        protocol = cfg('protocol', 'laotie')
+        if protocol == 'wkly':
+            self._send(_wkly_frame(addr, lock_num), read_len=11)
+        else:
+            self._send(_laotie_frame(addr, lock_num))
         return True
 
     def query_status(self, addr: int):
@@ -546,7 +560,7 @@ class RemoteConfigManager:
         for src, dst in key_map.items():
             if src in nr:
                 cfg_set(dst, nr[src])
-        for k in ('idle_timeout', 'result_page_duration'):
+        for k in ('bg_timeout', 'result_page_duration'):
             if k in data:
                 cfg_set(k, data[k])
         logger.info('远程配置已同步')
@@ -929,6 +943,19 @@ def _system_reboot():
             pass
 
 
+def _go_home():
+    try:
+        from jnius import autoclass
+        Intent = autoclass('android.content.Intent')
+        intent = Intent(Intent.ACTION_MAIN)
+        intent.addCategory(Intent.CATEGORY_HOME)
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        activity = autoclass('org.kivy.android.PythonActivity').mActivity
+        activity.startActivity(intent)
+    except Exception:
+        pass
+
+
 def _open_wifi_settings():
     try:
         from jnius import autoclass
@@ -1289,7 +1316,7 @@ class PasswordScreen(Screen):
         self._locked_until = 0.0
 
         root = FloatLayout()
-        _dark_bg(root, 1.0, 1.0, 1.0)
+        _dark_bg(root, 0.0, 0.0, 0.0)
 
         # 返回按钮（左上角）
         btn_back = Button(
@@ -1306,14 +1333,14 @@ class PasswordScreen(Screen):
             text='请输入开柜密码', font_size=dp(34), bold=True,
             pos_hint={'center_x': 0.25, 'center_y': 0.65},
             size_hint=(None, None), size=(dp(420), dp(60)), halign='center',
-            color=(0.1, 0.1, 0.1, 1),
+            color=(0.95, 0.95, 0.95, 1),
         ))
 
         self.lbl_pwd = Label(
             text='_ _ _ _ _ _', font_size=dp(54), bold=True,
             pos_hint={'center_x': 0.25, 'center_y': 0.47},
             size_hint=(None, None), size=(dp(420), dp(80)), halign='center',
-            color=(0.1, 0.1, 0.1, 1),
+            color=(0.95, 0.95, 0.95, 1),
         )
         root.add_widget(self.lbl_pwd)
 
@@ -1356,7 +1383,7 @@ class PasswordScreen(Screen):
         self._pwd = ''
         self._update_disp()
         self.lbl_err.text = ''
-        self._remaining = cfg('idle_timeout', 5)
+        self._remaining = 20
         self._idle_ev = Clock.schedule_interval(self._idle_tick, 1)
         self._imm_ev  = Clock.schedule_interval(lambda dt: _set_immersive(True), 2)
 
@@ -1375,7 +1402,7 @@ class PasswordScreen(Screen):
             App.get_running_app().go_poster()
 
     def _key(self, k: str):
-        self._remaining = cfg('idle_timeout', 5)
+        self._remaining = 20
         if k == '删':
             self._pwd = self._pwd[:-1]
             self._update_disp()
@@ -1766,22 +1793,41 @@ class AdminScreen(Screen):
         btn_reboot_dev.bind(on_press=self._reboot_device)
         sys_row.add_widget(btn_reboot_dev)
 
+        btn_home = Button(
+            text='返回桌面', font_size=dp(12),
+            background_color=(0.30, 0.30, 0.30, 1), background_normal='',
+        )
+        btn_home.bind(on_press=lambda _: _go_home())
+        sys_row.add_widget(btn_home)
+
         root.add_widget(sys_row)
 
         # ── 超时设置 ──────────────────────────────────────────────────────────
         to_row = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(6))
-        to_row.add_widget(Label(text='离开前台:', size_hint_x=0.16, font_size=dp(13)))
+        to_row.add_widget(Label(text='离开App:', size_hint_x=0.14, font_size=dp(13)))
         self.spn_idle = Spinner(
-            text=str(cfg('idle_timeout', 5)),
-            values=['5', '60'],
+            text=str(cfg('bg_timeout', 5)),
+            values=['5', '30', '60', '120'],
             font_size=dp(13), size_hint_x=0.14,
         )
-        self.spn_idle.bind(text=lambda sp, v: cfg_set('idle_timeout', int(v)))
+        self.spn_idle.bind(text=lambda sp, v: cfg_set('bg_timeout', int(v)))
         to_row.add_widget(self.spn_idle)
-        to_row.add_widget(Label(text='秒后返回海报页', size_hint_x=0.30, font_size=dp(13),
+        to_row.add_widget(Label(text='秒后强制返回', size_hint_x=0.20, font_size=dp(13),
                                 halign='left', color=(0.65, 0.65, 0.65, 1)))
-        to_row.add_widget(Label(size_hint_x=0.40))
+        to_row.add_widget(Label(text='协议:', size_hint_x=0.10, font_size=dp(13)))
+        self.spn_protocol = Spinner(
+            text=cfg('protocol', 'laotie'),
+            values=['laotie', 'wkly'],
+            font_size=dp(13), size_hint_x=0.18,
+        )
+        def _on_protocol(sp, v):
+            cfg_set('protocol', v)
+            _cfg_save()
+        self.spn_protocol.bind(text=_on_protocol)
+        to_row.add_widget(self.spn_protocol)
+        to_row.add_widget(Label(size_hint_x=0.12))
         root.add_widget(to_row)
+
 
         # ── 锁测试（6路）────────────────────────────────────────────────────
         lock_row = BoxLayout(
@@ -1830,8 +1876,10 @@ class AdminScreen(Screen):
         self.inp_addr.text = str(cfg('board_addr', 1))
         self.inp_api.text  = cfg('api_base', 'http://keyapi.wuhuxiche.com')
         self.inp_did.text  = cfg('device_id', '')
-        _idle = cfg('idle_timeout', 5)
-        self.spn_idle.text = str(_idle) if str(_idle) in ['5', '60'] else '5'
+        _idle = cfg('bg_timeout', 5)
+        self.spn_idle.text = str(_idle) if str(_idle) in ['5', '30', '60', '120'] else '5'
+        _proto = cfg('protocol', 'laotie')
+        self.spn_protocol.text = _proto if _proto in ['laotie', 'wkly'] else 'laotie'
         _hu = globals().get('_HOTUPDATE_VERSION')
         self.lbl_log.text = f'v{LocalLogger.APP_VERSION}  热更新: {_hu or "内置代码"}'
         if ctrl.connected:
@@ -2258,6 +2306,33 @@ class DoorLockApp(App):
         time.sleep(1)
         ok, msg = ctrl.connect(cfg('port', '/dev/ttyS1'), cfg('baudrate', 9600))
         logger.info(f'自动连接串口: {msg}')
+
+    def on_pause(self):
+        self._bg_cancel = threading.Event()
+        def _fg_timer():
+            secs = cfg('bg_timeout', 5)
+            if not self._bg_cancel.wait(secs):
+                self._bring_to_front()
+        threading.Thread(target=_fg_timer, daemon=True).start()
+        return True
+
+    def on_resume(self):
+        if hasattr(self, '_bg_cancel'):
+            self._bg_cancel.set()
+
+    def _bring_to_front(self):
+        try:
+            from jnius import autoclass
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            Intent = autoclass('android.content.Intent')
+            activity = PythonActivity.mActivity
+            intent = activity.getPackageManager().getLaunchIntentForPackage(
+                activity.getPackageName()
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            activity.startActivity(intent)
+        except Exception:
+            pass
 
     def on_stop(self):
         self._svc.stop()
