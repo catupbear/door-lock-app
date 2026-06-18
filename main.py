@@ -202,6 +202,10 @@ def _laotie_frame(board: int, lock: int) -> bytes:
     return bytes(frame)
 
 
+# 协议默认端口映射（管理员切换协议时端口自动联动）
+_PROTO_PORT = {'laotie': '/dev/ttyS1', 'wkly': '/dev/ttyS0'}
+
+
 # ─── WKLY协议（485锁控板）────────────────────────────────────────────────────
 def _wkly_frame(addr: int, lock_num: int) -> bytes:
     frame = bytearray([0x57, 0x4B, 0x4C, 0x59, 0x09, addr & 0xFF, 0x82, lock_num & 0xFF])
@@ -983,12 +987,14 @@ def _ensure_audio_files():
         return None
 
 _audio_dir = None
+_active_player = None      # 持有当前 MediaPlayer 引用，防止播放途中被 GC 回收导致原生崩溃（闪退）
+_player_lock = threading.Lock()
 
 def _speak(lock_num: int = 0, *_):
     """播放对应柜门语音提示"""
     global _audio_dir
     def _play():
-        global _audio_dir
+        global _audio_dir, _active_player
         try:
             from jnius import autoclass
             if not _audio_dir:
@@ -1001,16 +1007,24 @@ def _speak(lock_num: int = 0, *_):
                 _audio_dir = _ensure_audio_files()
                 if not os.path.exists(path):
                     return
-            AudioManager = autoclass('android.media.AudioManager')
-            activity = autoclass('org.kivy.android.PythonActivity').mActivity
-            am = activity.getSystemService(activity.AUDIO_SERVICE)
-            am.setStreamVolume(AudioManager.STREAM_MUSIC,
-                               am.getStreamMaxVolume(AudioManager.STREAM_MUSIC), 0)
+            # 注意：不要调用 AudioManager.getSystemService/setStreamVolume —
+            # 在部分机器的 ROM/音频 HAL 上从后台线程调系统音频服务会原生崩溃(SIGSEGV)。
+            # 改用 MediaPlayer.setVolume 在播放器内部把音量拉满，不触碰系统服务。
             MediaPlayer = autoclass('android.media.MediaPlayer')
-            mp = MediaPlayer()
-            mp.setDataSource(path)
-            mp.prepare()
-            mp.start()
+            with _player_lock:
+                # 先释放上一个播放器，再创建新的并持有全局引用，防止播放途中被 GC 回收
+                try:
+                    if _active_player is not None:
+                        _active_player.release()
+                except Exception:
+                    pass
+                _active_player = None
+                mp = MediaPlayer()
+                mp.setDataSource(path)
+                mp.prepare()
+                mp.setVolume(1.0, 1.0)
+                mp.start()
+                _active_player = mp   # ← 关键：持有引用，避免播放途中被回收
         except Exception as e:
             logger.warn(f'[AUDIO] 播放失败: {e}')
     threading.Thread(target=_play, daemon=True).start()
@@ -1858,6 +1872,31 @@ class AdminScreen(Screen):
         )
         def _on_protocol(sp, v):
             cfg_set('protocol', v)
+            # 协议与端口联动：老铁→/dev/ttyS1，WKLY→/dev/ttyS0
+            port = _PROTO_PORT.get(v)
+            if port:
+                cfg_set('port', port)
+                self.inp_port.text = port
+                # 切换端口后断开旧连接并按新端口重连
+                def _switch_port():
+                    try:
+                        ctrl.disconnect()
+                    except Exception:
+                        pass
+                    ok, msg = ctrl.connect(port, cfg('baudrate', 9600))
+                    logger.info(f'[协议切换] 协议={v} 端口={port} 重连: {msg}')
+                    def _ui(_):
+                        if ok:
+                            self.btn_conn.text = '断开'
+                            self.btn_conn.background_color = (0.70, 0.35, 0.08, 1)
+                            self.lbl_conn.text = '已连接'
+                            self.lbl_conn.color = (0.2, 0.85, 0.35, 1)
+                        else:
+                            self.lbl_conn.text = '未连接'
+                            self.lbl_conn.color = (0.9, 0.3, 0.3, 1)
+                        self.lbl_log.text = f'协议={v} 端口={port} {"已连接" if ok else "连接失败"}'
+                    Clock.schedule_once(_ui, 0)
+                threading.Thread(target=_switch_port, daemon=True).start()
             _cfg_save()
         self.spn_protocol.bind(text=_on_protocol)
         to_row.add_widget(self.spn_protocol)
