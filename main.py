@@ -333,7 +333,18 @@ class ApiClient:
     def heartbeat(self, network_type='wifi'):
         return self._post('/api/device/heartbeat', {
             'device_id': cfg('device_id', ''), 'online': True, 'network_type': network_type,
+            'device_uptime': int(_device_uptime()), 'app_uptime': int(_app_uptime()),
         })
+
+    def report_event(self, event_type, detail=None):
+        """上报掉线诊断事件：boot(启动回溯) / network_recovered(断网恢复)"""
+        body = {
+            'device_id': cfg('device_id', ''), 'event_type': event_type,
+            'device_uptime': int(_device_uptime()), 'app_uptime': int(_app_uptime()),
+        }
+        if detail:
+            body.update(detail)
+        return self._post('/api/device/event', body)
 
     def get_config(self):
         return self._get('/api/device/config', device_id=cfg('device_id', ''))
@@ -494,16 +505,23 @@ class NetworkRebootManager:
         while self._running:
             interval = cfg('network_check_interval', 60)
             time.sleep(interval)
-            if not cfg('offline_reboot_enabled', True):
-                self._offline_since = None
-                continue
             online = _check_network()
+            # —— 断网诊断：无论是否开启断网重启，都记录断网区间并在恢复后补传 ——
             if online:
-                self._offline_since = None
+                if self._offline_since is not None:
+                    logger.info('网络已恢复，补传断网记录')
+                    _net_outage_recover()
+                    self._offline_since = None
+            else:
+                if self._offline_since is None:
+                    self._offline_since = time.time()
+                    _net_outage_mark(self._offline_since)
+                    logger.warn('检测到断网，开始计时')
+            # —— 断网自动重启（受开关控制）——
+            if not cfg('offline_reboot_enabled', True):
                 continue
-            if self._offline_since is None:
-                self._offline_since = time.time()
-                logger.warn('检测到断网，开始计时')
+            if online:
+                continue
             offline_secs = time.time() - self._offline_since
             delay_secs = cfg('offline_reboot_delay', 10) * 60
             if offline_secs < delay_secs:
@@ -850,6 +868,94 @@ def _check_network() -> bool:
         return True
     except Exception:
         return False
+
+
+# ─── 掉线诊断 ─────────────────────────────────────────────────────────────────
+# 原理：用两个"重启会归零、平时连续"的计数器(系统uptime / App uptime)判断是哪一层
+# 重启了，再用"断网时本地写、恢复后补传"的记录确认断网。详见排查说明。
+_APP_START_TS = time.time()        # 进程启动时刻（热更新 runpy 加载本模块即记，约等于App启动）
+_DIAG_DIR = ''                     # build() 中设为可写数据目录
+BOOT_RECENT_SECS = 180             # 系统uptime小于此值视为"刚开机"(整机重启过)
+
+
+def _device_uptime() -> float:
+    """系统开机时长(秒)。只有整机重启才归零，App 重启不影响。读不到返回 -1。"""
+    try:
+        with open('/proc/uptime') as f:
+            return float(f.read().split()[0])
+    except Exception:
+        return -1.0
+
+
+def _app_uptime() -> float:
+    """App 进程运行时长(秒)。App 一重启就归零。"""
+    return max(0.0, time.time() - _APP_START_TS)
+
+
+def _diag_path(name: str) -> str:
+    return os.path.join(_DIAG_DIR or os.path.expanduser('~'), name)
+
+
+def _mark_intentional_restart(reason: str = '主动重启'):
+    """任何"我们主动重启"(热更新/断网重启/手动)前调用，留下面包屑。
+    崩溃不会走到这里 → 启动时没有面包屑即判定为死机/崩溃。"""
+    try:
+        with open(_diag_path('restart_marker.json'), 'w', encoding='utf-8') as f:
+            json.dump({'ts': time.time(), 'reason': reason}, f)
+    except Exception:
+        pass
+
+
+def _classify_boot() -> dict:
+    """App 启动时回溯判断上一次为什么会中断。返回 {kind, reason, device_uptime}。"""
+    dev_up = _device_uptime()
+    # 读并消费面包屑
+    marker = None
+    try:
+        with open(_diag_path('restart_marker.json'), encoding='utf-8') as f:
+            marker = json.load(f)
+        os.remove(_diag_path('restart_marker.json'))
+    except Exception:
+        marker = None
+    # 首次部署该诊断：老代码不会留面包屑，避免误报一次"死机"
+    if not cfg('diag_initialized'):
+        cfg_set('diag_initialized', True)
+        return {'kind': 'first_run', 'reason': '首次启用诊断', 'device_uptime': dev_up}
+    if 0 <= dev_up < BOOT_RECENT_SECS:
+        return {'kind': 'power_or_reboot', 'reason': '没电/设备重启', 'device_uptime': dev_up}
+    if marker and (time.time() - marker.get('ts', 0)) < 300:
+        return {'kind': 'app_restart', 'reason': '主动重启:' + marker.get('reason', ''),
+                'device_uptime': dev_up}
+    return {'kind': 'app_crash', 'reason': '死机/App崩溃', 'device_uptime': dev_up}
+
+
+def _net_outage_mark(offline_at: float):
+    """检测到断网时落盘记录起点（设备此时还活着，只是没网）。"""
+    try:
+        with open(_diag_path('net_outage.json'), 'w', encoding='utf-8') as f:
+            json.dump({'offline_at': offline_at}, f)
+    except Exception:
+        pass
+
+
+def _net_outage_recover():
+    """网络恢复后调用：若有未结的断网记录，补传给服务器并清除。"""
+    try:
+        with open(_diag_path('net_outage.json'), encoding='utf-8') as f:
+            d = json.load(f)
+    except Exception:
+        return
+    offline_at = d.get('offline_at', 0)
+    try:
+        api.report_event('network_recovered', {
+            'offline_at': int(offline_at), 'online_at': int(time.time()),
+        })
+    except Exception:
+        return
+    try:
+        os.remove(_diag_path('net_outage.json'))
+    except Exception:
+        pass
 
 
 def _dark_bg(widget, r=1.0, g=0.40, b=0.0):
@@ -2294,10 +2400,11 @@ class DoorLockApp(App):
             _data_dir = _ctx.getFilesDir().getAbsolutePath()
         except Exception:
             pass
-        global _INTERNAL, _LOG_PATH, _BACKUP_SCRIPT
+        global _INTERNAL, _LOG_PATH, _BACKUP_SCRIPT, _DIAG_DIR
         _INTERNAL      = os.path.join(_data_dir, 'door_lock_main.py')
         _LOG_PATH       = os.path.join(_data_dir, 'door_lock_loader.log')
         _BACKUP_SCRIPT  = _INTERNAL + '.bak'
+        _DIAG_DIR       = _data_dir
         _cfg_load(_data_dir)
 
         global logger, reboot_mgr, cfg_mgr, poster_mgr
@@ -2359,6 +2466,23 @@ class DoorLockApp(App):
 
         logger.info(f'App启动 v{LocalLogger.APP_VERSION} 设备ID={cfg("device_id","未初始化")}')
 
+        # 启动时回溯上一次中断原因，联网后上报（区分 没电/死机/主动重启）
+        _boot = _classify_boot()
+        logger.info(f'[掉线诊断] 本次启动判定: {_boot["reason"]} (设备uptime={int(_boot["device_uptime"])}s)')
+        def _report_boot():
+            for _ in range(30):          # 最多等 60s 直到联网
+                if _check_network():
+                    break
+                time.sleep(2)
+            try:
+                api.report_event('boot', {
+                    'boot_kind': _boot['kind'], 'boot_reason': _boot['reason'],
+                })
+            except Exception:
+                pass
+            _net_outage_recover()        # 若重启前正断着网，补传那段断网记录
+        threading.Thread(target=_report_boot, daemon=True).start()
+
         if SERIAL_AVAILABLE:
             threading.Thread(target=self._auto_connect, daemon=True).start()
 
@@ -2416,8 +2540,9 @@ class DoorLockApp(App):
         ctrl.disconnect()
         logger.info('App停止')
 
-    def restart_app(self):
+    def restart_app(self, reason: str = '主动重启'):
         logger.info('正在重启App...')
+        _mark_intentional_restart(reason)   # 留面包屑：这是主动重启，不是崩溃
         try:
             from jnius import autoclass
             Intent         = autoclass('android.content.Intent')
